@@ -1,0 +1,2 @@
+# .github
+The OpenUX Standard
