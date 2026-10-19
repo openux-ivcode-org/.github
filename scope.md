@@ -13,7 +13,7 @@ OpenUX is designed to complement software specification standards such as OpenSp
 The standard is the core deliverable. Editors, validators, and other tools consume and implement the standard rather than defining its meaning independently.
 
 ## 2. Scope
-
+ 
 OpenUX should support specifications ranging from workflow-focused descriptions to highly detailed visual and behavioral specifications.
 
 A project does not need to specify every aspect of its interface. The level of detail and constraint should emerge from what the user specifies, rather than from a single project-wide precision mode.
@@ -31,7 +31,7 @@ These are illustrative usage patterns, not separate specification modes. The und
 
 The specification is more than prose requirements. Its structure, properties, relationships, and authored arrangement can all express intent.
 
-For example, placing an email field above a password field in a page layout may communicate an intended arrangement even if no prose requirement repeats that fact.
+For example, placing an email field above a password field in a screen layout may communicate an intended arrangement even if no prose requirement repeats that fact.
 
 **Working principle:**
 
@@ -77,4 +77,4 @@ adherence:
   workflow: strict
   layout: strict
   theme: none
-  component: loose
+  asset: loose

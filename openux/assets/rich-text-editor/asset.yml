@@ -1,0 +1,10 @@
+id: rich-text-editor
+name: Rich Text Editor
+description: A visual mockup of a rich-text editing control.
+attributes:
+  sample-content:
+    type: string
+render:
+  type: html-reference
+  source: asset.html
+  interactive: false

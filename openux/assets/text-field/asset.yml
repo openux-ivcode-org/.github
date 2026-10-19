@@ -1,0 +1,26 @@
+id: text-field
+name: Text Field
+description: A reusable asset for entering text.
+attributes:
+  label:
+    type: string
+    default: Text field
+    overridable: true
+  input-type:
+    type: list
+    options:
+      - text
+      - email
+      - password
+      - number
+      - url
+      - tel
+    default: text
+    overridable: true
+  required:
+    type: boolean
+    default: false
+    overridable: true
+render:
+  type: html-reference
+  source: asset.html

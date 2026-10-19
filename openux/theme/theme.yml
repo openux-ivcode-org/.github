@@ -1,0 +1,14 @@
+name: OpenUX Light
+styles: theme.css
+colors:
+  primary: "#4569e8"
+  on-primary: "#ffffff"
+  ink: "#1e293b"
+  muted: "#566278"
+  background: "#f3f6fa"
+  panel: "#ffffff"
+  surface: "#ffffff"
+  surface-muted: "#f8f9fc"
+  border: "#dfe4ed"
+  border-muted: "#e8ecf2"
+  focus: "#aebeff"

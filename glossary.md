@@ -6,17 +6,29 @@ Terms defined here should be used consistently throughout the standard. Where a 
 
 ## Core Concepts
 
-### Page
+### Screen
 
-A single view of a user interface. A page defines the interface presented to the user, including its visible elements, layout, and relevant presentation states.
+A single view of a user interface. A screen defines the interface presented to the user, including its visible elements, layout, and relevant presentation states.
 
-### Component
+### Asset
 
-A user interface element contained within a page or another component. Examples include buttons, text fields, menus, dialogs, and tables. Components may define properties, presentation states, and supported interactions.
+A user interface element contained within a screen or another asset. Examples include buttons, text fields, menus, dialogs, and tables. Assets may define properties and presentation states, and may expose zero or more interactions.
+
+### Asset Template
+
+A reusable definition of an asset type from which asset instances are created. Conceptually, a template is like a class.
+
+### Asset Instance
+
+A specific use of an asset template, included in a screen and carrying detailed attributes for that use. Conceptually, an instance is like an object.
+
+### Theme
+
+A project-level set of visual properties applied across all screens, such as colors, typography, and spacing.
 
 ### Workflow
 
-A defined user action or sequence of actions, together with the expected system behavior and observable outcomes. A workflow may involve one or more pages, interactions, and state changes.
+A defined user action or sequence of actions, together with the expected system behavior and observable outcomes. A workflow may involve one or more screens, interactions, and state changes.
 
 ### State
 
@@ -36,17 +48,17 @@ An identifiable occurrence that may trigger behavior, such as a user interaction
 
 ### Action
 
-An operation performed in response to an event or workflow step. An action may update state, validate input, display feedback, or navigate to another page.
+An operation performed in response to an event or workflow step. An action may update state, validate input, display feedback, invoke a workflow, or navigate to another screen.
 
 ### Requirement
 
-A statement describing a condition, capability, or behavior that the software is expected to satisfy. Requirements may be linked to pages, components, workflows, and verification scenarios.
+A statement describing a condition, capability, or behavior that the software is expected to satisfy. Requirements may be linked to screens, assets, workflows, and verification scenarios.
 
 ## Specification and Change Management
 
 ### Artifact
 
-A structured piece of information defined by the OpenUX standard, such as a page, component, workflow, requirement, or change definition.
+A structured piece of information defined by the OpenUX standard, such as a screen, asset template, asset instance, theme, workflow, requirement, or change definition.
 
 ### Project
 
@@ -74,7 +86,7 @@ A tool that loads, presents, and modifies OpenUX artifacts while preserving thei
 
 ### Traceability
 
-Explicit relationships between artifacts, such as links connecting requirements to workflows, pages, and expected outcomes.
+Explicit relationships between artifacts, such as links connecting requirements to workflows, screens, and expected outcomes.
 
 ### Archive
 

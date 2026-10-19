@@ -1,0 +1,16 @@
+name: Account Portal
+description: Example project for the OpenUX file-driven preview.
+screens:
+  - id: sign-in
+    file: screens/sign-in.yml
+assets:
+  - id: text-field
+    directory: assets/text-field
+  - id: button
+    directory: assets/button
+  - id: rich-text-editor
+    directory: assets/rich-text-editor
+theme: theme/theme.yml
+workflows:
+  - id: login
+    file: workflows/login.yml

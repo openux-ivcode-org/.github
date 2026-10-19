@@ -1,0 +1,75 @@
+:host {
+  display: block;
+  color: var(--theme-ink);
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+}
+
+.openux-field { display: block; }
+.openux-field-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--theme-muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+.openux-control {
+  width: 100%;
+  height: 45px;
+  padding: 0 13px;
+  border: 1px solid var(--theme-border);
+  border-radius: 7px;
+  outline: none;
+  color: var(--theme-ink);
+  background: var(--theme-surface);
+  font: 13px Inter, "Segoe UI", Arial, sans-serif;
+}
+.openux-control:focus {
+  border-color: var(--theme-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-primary) 15%, transparent);
+}
+.openux-button {
+  width: 100%;
+  min-height: 46px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--theme-on-primary);
+  background: var(--theme-primary);
+  box-shadow: 0 7px 14px color-mix(in srgb, var(--theme-primary) 20%, transparent);
+  font: 700 13px Inter, "Segoe UI", Arial, sans-serif;
+  cursor: pointer;
+}
+.openux-button:hover { filter: brightness(.96); }
+.openux-button:focus-visible {
+  outline: 3px solid var(--theme-focus);
+  outline-offset: 2px;
+}
+
+.openux-rich-editor {
+  overflow: hidden;
+  border: 1px solid var(--theme-border);
+  border-radius: 9px;
+  color: var(--theme-ink);
+  background: var(--theme-surface);
+  font: 13px/1.6 Inter, "Segoe UI", Arial, sans-serif;
+}
+.openux-rich-editor__toolbar {
+  display: flex;
+  gap: 6px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--theme-border-muted);
+  background: var(--theme-surface-muted);
+}
+.openux-rich-editor__tool {
+  min-width: 25px;
+  padding: 3px 6px;
+  border: 1px solid var(--theme-border);
+  border-radius: 5px;
+  color: var(--theme-muted);
+  background: var(--theme-surface);
+  text-align: center;
+  font-size: 11px;
+}
+.openux-rich-editor__document { min-height: 120px; padding: 16px; }
+.openux-rich-editor__document p { margin: 0 0 9px; }
+.openux-rich-editor__document p:last-child { margin-bottom: 0; }

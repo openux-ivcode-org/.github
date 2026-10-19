@@ -1,0 +1,8 @@
+id: login
+name: Login
+description: A local preview of the sign-in workflow.
+steps:
+  - name: Validate credentials
+    message: The email and password fields would be validated here.
+  - name: Authenticate
+    message: Authentication requires an application backend and is not performed by this preview.

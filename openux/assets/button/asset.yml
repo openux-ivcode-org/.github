@@ -1,0 +1,11 @@
+id: button
+name: Button
+description: A reusable asset that can be activated.
+attributes:
+  label:
+    type: string
+    default: Button
+    overridable: true
+render:
+  type: html-reference
+  source: asset.html
