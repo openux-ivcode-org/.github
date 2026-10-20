@@ -1,15 +1,35 @@
-name: Account Portal
+name: OpenUX Example
 description: Example project for the OpenUX file-driven preview.
 screens:
   - id: sign-in
     file: screens/sign-in.yml
+  - id: home
+    file: screens/home.yml
 assets:
+  - id: centered-form-layout
+    directory: assets/centered-form-layout
   - id: text-field
     directory: assets/text-field
   - id: button
     directory: assets/button
   - id: rich-text-editor
     directory: assets/rich-text-editor
+  - id: dashboard-layout
+    directory: assets/dashboard-layout
+  - id: dashboard-overview
+    directory: assets/dashboard-overview
+  - id: dashboard-header
+    directory: assets/dashboard-header
+  - id: dashboard-navigation
+    directory: assets/dashboard-navigation
+  - id: dashboard-welcome
+    directory: assets/dashboard-welcome
+  - id: dashboard-metric
+    directory: assets/dashboard-metric
+  - id: dashboard-activity
+    directory: assets/dashboard-activity
+  - id: dashboard-insights
+    directory: assets/dashboard-insights
 theme: theme/theme.yml
 workflows:
   - id: login

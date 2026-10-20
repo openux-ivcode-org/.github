@@ -1,6 +1,7 @@
 id: button
 name: Button
 description: A reusable asset that can be activated.
+category: Forms
 attributes:
   label:
     type: string

@@ -2,29 +2,36 @@ name: Sign In
 description: Allows a user to enter their account credentials.
 note: Keep the form focused and avoid adding unrelated content.
 assets:
-  - asset-template: text-field
-    name: Email address
-    description: Collects the user's email address.
-    note: Require valid email formatting.
+  - asset-template: centered-form-layout
+    name: Sign-in form layout
+    description: Centers the sign-in fields in one content drop zone.
+    slots:
+      content:
+        - asset-template: text-field
+          name: Email address
+          description: Collects the user's email address.
+          note: Require valid email formatting.
+          attributes:
+            label: Email
+            input-type: email
+            required: true
+        - asset-template: text-field
+          name: Password
+          description: Collects the user's password.
+          note: Hide the password while it is being entered.
+          attributes:
+            label: Password
+            input-type: password
+            required: true
+        - asset-template: button
+          name: Sign-in button
+          description: Submits the entered credentials.
+          attributes:
+            label: Sign in
+          interactions:
+            - event: click
+              action:
+                type: invoke-workflow
+                workflow: login
     attributes:
-      label: Email
-      input-type: email
-      required: true
-  - asset-template: text-field
-    name: Password
-    description: Collects the user's password.
-    note: Hide the password while it is being entered.
-    attributes:
-      label: Password
-      input-type: password
-      required: true
-  - asset-template: button
-    name: Sign-in button
-    description: Submits the entered credentials.
-    attributes:
-      label: Sign in
-    interactions:
-      - event: click
-        action:
-          type: invoke-workflow
-          workflow: login
+      max-width: 640

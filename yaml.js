@@ -42,6 +42,8 @@ function parseOpenuxYaml(source) {
     if (raw.startsWith("'") && raw.endsWith("'")) {
       return raw.slice(1, -1).replace(/''/g, "'");
     }
+    if (/^\{\s*\}$/.test(raw)) return {};
+    if (/^\[\s*\]$/.test(raw)) return [];
     return raw;
   }
 

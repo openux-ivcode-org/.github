@@ -1,0 +1,27 @@
+<style>
+  .openux-centered-form {
+    display: grid;
+    gap: 24px;
+    width: 100%;
+    max-width: ${attributes.max-width}px;
+    margin: 0 auto;
+    color: var(--theme-ink);
+    font-family: Inter, "Segoe UI", Arial, sans-serif;
+  }
+  .openux-centered-form__heading { text-align: center; }
+  .openux-centered-form__title {
+    margin: 0 0 6px;
+    font-size: 22px;
+    font-weight: 750;
+    letter-spacing: -.4px;
+  }
+  .openux-centered-form__description {
+    margin: 0;
+    color: var(--theme-muted);
+    font-size: 13px;
+  }
+  .openux-centered-form__content { display: flex; flex-direction: column; gap: 14px; }
+</style>
+<section class="openux-centered-form">
+  <div class="openux-centered-form__content" data-openux-slot="content"></div>
+</section>

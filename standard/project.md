@@ -2,9 +2,9 @@
 
 **Status:** Working notes; not normative.
 
-This file captures ideas for organizing an OpenUX project. It describes the structure of a project that uses OpenUX, not the files in the OpenUX standard repository.
+This file captures ideas for organizing an OpenUX project and describes the sample project layout in this repository.
 
-All files and resources for the OpenUX project live under the `openux/` directory.
+The editor prototype and standards documents are separate from the example project. Project files and resources live under `openux/`:
 
 ## Goals
 
@@ -16,11 +16,13 @@ All files and resources for the OpenUX project live under the `openux/` director
 ## Candidate Structure
 
 ```text
-<workspace-root>/
+<repository-root>/
+├── app.js
+├── index.html
+├── yaml.js
+├── standard/
+│   └── ...
 └── openux/
-    ├── index.html
-    ├── app.js
-    ├── yaml.js
     ├── project.yml
     ├── screens/
     │   └── sign-in.yml
@@ -29,6 +31,9 @@ All files and resources for the OpenUX project live under the `openux/` director
     │   │   ├── asset.yml
     │   │   └── asset.html
     │   ├── button/
+    │   │   ├── asset.yml
+    │   │   └── asset.html
+    │   ├── centered-form-layout/
     │   │   ├── asset.yml
     │   │   └── asset.html
     │   └── rich-text-editor/
@@ -43,7 +48,7 @@ All files and resources for the OpenUX project live under the `openux/` director
     └── archive/
 ```
 
-The browser-only prototype is served from `openux/` and reads the project manifest and artifacts over HTTP. It supports in-memory editing, Screen and asset previews, and simulation of declared interactions, but does not write changes back. Each custom asset has its own named directory containing `asset.yml` and `asset.html`. This is a starting proposal, not a finalized layout.
+The Node.js server serves the browser editor from the repository root and reads the sample project's manifest and artifacts from `openux/` over HTTP. The editor supports Screen and asset previews, live editing of asset HTML, simulation of declared interactions, and saving YAML and asset HTML changes through the server. Each custom asset has its own named directory containing `asset.yml` and `asset.html`. This is a starting proposal, not a finalized project layout.
 
 `project.yml` is the manifest that lists Screen files, asset directories, the Theme file, and Workflow files. The Theme file may reference a shared stylesheet with `styles: theme.css`; its CSS is applied to rendered assets, and Theme color entries are exposed as `--theme-<name>` custom properties. The prototype currently supports the simple YAML mappings, sequences, and scalar values used by these draft files; it is not a full YAML implementation.
 

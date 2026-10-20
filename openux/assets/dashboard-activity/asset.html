@@ -1,0 +1,48 @@
+<style>
+  .openux-activity-card {
+    overflow: hidden;
+    border: 1px solid #e7ebf2;
+    border-radius: 12px;
+    background: var(--theme-surface, #fff);
+    box-shadow: 0 2px 7px rgb(28 45 80 / 3%);
+  }
+  .openux-activity-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 17px 18px 13px;
+    border-bottom: 1px solid #eef1f5;
+  }
+  .openux-activity-title { margin: 0; color: #253149; font-size: 13px; font-weight: 700; }
+  .openux-activity-link { color: #4569d8; font-size: 10px; font-weight: 650; }
+  .openux-activity-row {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 11px;
+    padding: 12px 18px;
+    border-bottom: 1px solid #f0f2f6;
+  }
+  .openux-activity-row:last-child { border-bottom: 0; }
+  .openux-activity-icon {
+    display: grid;
+    width: 32px;
+    height: 32px;
+    place-items: center;
+    border-radius: 9px;
+    color: #5269bb;
+    background: #eef2ff;
+    font-size: 13px;
+  }
+  .openux-activity-merchant { margin: 0 0 2px; color: #303c52; font-size: 11px; font-weight: 650; }
+  .openux-activity-meta { margin: 0; color: #8a95a7; font-size: 9px; }
+  .openux-activity-amount { color: #303c52; font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .openux-activity-amount--credit { color: #168568; }
+</style>
+<section class="openux-activity-card" aria-label="Recent transactions">
+  <div class="openux-activity-heading"><h2 class="openux-activity-title">Recent activity</h2><span class="openux-activity-link">View all</span></div>
+  <div class="openux-activity-row"><span class="openux-activity-icon">C</span><div><p class="openux-activity-merchant">Corner Coffee</p><p class="openux-activity-meta">Today, 9:42 AM · Everyday checking</p></div><span class="openux-activity-amount">−$6.80</span></div>
+  <div class="openux-activity-row"><span class="openux-activity-icon">↗</span><div><p class="openux-activity-merchant">Payroll deposit</p><p class="openux-activity-meta">Yesterday · Everyday checking</p></div><span class="openux-activity-amount openux-activity-amount--credit">+$2,840.00</span></div>
+  <div class="openux-activity-row"><span class="openux-activity-icon">M</span><div><p class="openux-activity-merchant">Metro Market</p><p class="openux-activity-meta">Oct 16 · Rewards card</p></div><span class="openux-activity-amount">−$84.26</span></div>
+  <div class="openux-activity-row"><span class="openux-activity-icon">H</span><div><p class="openux-activity-merchant">Home internet</p><p class="openux-activity-meta">Oct 15 · Everyday checking</p></div><span class="openux-activity-amount">−$65.00</span></div>
+</section>

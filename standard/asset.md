@@ -6,8 +6,10 @@
 
 - Assets are authored as reusable templates and included in Screens as instances.
 - Each custom asset has a directory named for the asset, containing `asset.yml` and `asset.html`.
+- An asset template may define one `category` string as a slash-delimited path (for example, `Forms/Inputs`). Each path segment represents a nested organizational category; categories do not define asset behavior. Templates without a category are uncategorized.
 - The Asset Editor creates and edits asset templates.
-- While editing a Screen, the asset palette exposes templates as assets to add: selecting or dragging one creates an instance on the active Screen. Editing the template is a separate action that opens its template setup.
+- A Screen contains exactly one root layout asset; other assets are placed in that layout's named slots. In the prototype, the asset library groups templates by category, clicking an asset opens its template editor, and dragging it onto the Screen or into a named slot creates an instance.
+- Layout assets declare named slots in `asset.yml`, provide a matching `data-openux-slot` element in `asset.html` for each slot, and receive child asset instances through a Screen instance's `slots` mapping. The same slot ID connects all three places. The prototype marks templates that declare slots with a Layout badge and supports adding or moving instances into slots, reordering them, and deleting an instance.
 - An asset template is like a class: it is a reusable definition of an asset type.
 - An asset instance is like an object: it is created from a template, included in a Screen, and defines detailed attributes for that use.
 - Each asset template requires a Name and Description.
@@ -36,7 +38,7 @@ openux/
             └── toolbar-icon.png
 ```
 
-The `asset.yml` file defines the template metadata and attributes. When the template uses HTML rendering, it references the sibling file with `source: asset.html`; that HTML may in turn reference files such as `images/toolbar-icon.png`. A Screen refers to the template by its `id`; it does not copy the template definition into the Screen. The exact rules for normalizing asset names into directory names remain open.
+The `asset.yml` file defines the template metadata, attributes, and (for layouts) named slots. When the template uses HTML rendering, it references the sibling file with `source: asset.html`; that HTML may in turn reference files such as `images/toolbar-icon.png`. A Screen refers to the template by its `id`; it does not copy the template definition into the Screen. The exact rules for normalizing asset names into directory names remain open.
 
 ## HTML Attribute Placeholders
 
@@ -138,6 +140,82 @@ render:
 ```
 
 This is a proposed format; the preview should use Theme values where available.
+
+## Rendered Asset Instance Context
+
+A Studio that renders a nested asset instance or standalone asset-template preview must expose machine-readable context on the outer asset-instance container. This context lets browser inspection, automation, and debugging tools identify which project artifact produced the rendered element. These are DOM attributes, not fields to add to the Screen or asset YAML. The Screen's root layout instance is the exception: omit these context attributes from its container so nested assets can be targeted independently; the Screen ID and name remain available on the major Screen containers.
+
+| Attribute | Value |
+|---|---|
+| `data-openux-screen-id` | The Screen ID from the project manifest that owns the instance. Use an empty string when rendering a standalone asset-template preview that is not part of a Screen. |
+| `data-openux-screen-name` | The owning Screen's name, falling back to its ID when no name is available. Use an empty string for a standalone asset-template preview. |
+| `data-openux-asset-id` | The `id` of the asset template referenced by the instance's `asset-template` field. |
+| `data-openux-instance-name` | The asset instance's `name`. Use an empty string if no instance name is available. |
+| `data-openux-instance-path` | A JSON-serialized array locating the instance in the Screen's asset tree. The root asset starts with its index in the Screen's `assets` list; each nested level adds the slot ID and the child's index in that slot. |
+
+For example, `[0,"content",2]` identifies the third child in the `content` slot of the first root asset. The path distinguishes repeated uses of the same template within a Screen. It is a locator for the current tree structure and may change when instances are reordered or moved; it is not a persistent instance ID. For a standalone template preview, use `[]` and an empty Screen ID and name.
+
+## Layout Asset Slots
+
+A layout asset declares one or more slots in `asset.yml`. Each slot has a unique `id` and an optional human-readable `name`. The ID is the key used to connect the definition to both the layout HTML and the Screen instance:
+
+```yaml
+slots:
+  - id: content
+    name: Form content
+```
+
+The layout's `asset.html` must contain exactly one element for each declared slot. Set `data-openux-slot` to the matching ID:
+
+```html
+<section class="form-layout">
+  <div data-openux-slot="content"></div>
+</section>
+```
+
+Screen instances put child assets in a `slots` mapping keyed by those same IDs:
+
+```yaml
+assets:
+  - asset-template: two-area-layout
+    slots:
+      primary:
+        - asset-template: text-field
+          name: First asset
+          attributes:
+            label: Primary area
+      secondary:
+        - asset-template: button
+          name: Second asset
+```
+
+For example, a layout can declare multiple independent areas in `asset.yml`:
+
+```yaml
+slots:
+  - id: primary
+    name: Primary area
+  - id: secondary
+    name: Secondary area
+```
+
+```html
+<div data-openux-slot="primary"></div>
+<div data-openux-slot="secondary"></div>
+```
+
+Each area gets its own key in the root layout instance's `slots` mapping, and the key must match the slot ID in the layout definition and HTML. Slots define where child assets are placed; any relationships or behavior between those areas would need separate interaction or state definitions. In the prototype, palette assets can be dropped into a slot, and existing instances can be dragged between slots or reordered by dropping them before or after another instance. The Screen canvas accepts only its single root layout; content assets must be placed into a named slot. This composition format is exploratory and is not yet normative.
+
+Layout assets can expose styling attributes such as `max-width`, allowing each Screen instance to adjust its content width without changing the reusable template:
+
+```yaml
+attributes:
+  max-width:
+    type: number
+    format: integer
+    default: 640
+    overridable: true
+```
 
 ## Questions to Explore
 

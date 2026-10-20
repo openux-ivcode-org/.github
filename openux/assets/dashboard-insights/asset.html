@@ -1,0 +1,33 @@
+<style>
+  .openux-insights { display: grid; gap: 14px; }
+  .openux-insight-card {
+    padding: 17px 17px 18px;
+    border: 1px solid #e7ebf2;
+    border-radius: 12px;
+    background: var(--theme-surface, #fff);
+    box-shadow: 0 2px 7px rgb(28 45 80 / 3%);
+  }
+  .openux-insight-eyebrow { margin: 0 0 8px; color: #8490a3; font-size: 10px; font-weight: 650; }
+  .openux-insight-title { margin: 0 0 6px; color: #2c3950; font-size: 13px; font-weight: 700; }
+  .openux-insight-copy { margin: 0; color: #7c889b; font-size: 10px; line-height: 1.6; }
+  .openux-goal-amount { margin: 13px 0 7px; color: #253149; font-size: 17px; font-weight: 750; }
+  .openux-goal-track { height: 7px; overflow: hidden; border-radius: 9px; background: #edf0f5; }
+  .openux-goal-progress { width: 62%; height: 100%; border-radius: inherit; background: #5975df; }
+  .openux-goal-caption { display: flex; justify-content: space-between; margin-top: 7px; color: #8a95a7; font-size: 9px; }
+  .openux-tip-mark { display: inline-grid; width: 24px; height: 24px; place-items: center; margin-bottom: 9px; border-radius: 7px; color: #a26b1f; background: #fff5df; font-weight: 750; }
+</style>
+<aside class="openux-insights">
+  <section class="openux-insight-card">
+    <p class="openux-insight-eyebrow">YOUR GOAL</p>
+    <h2 class="openux-insight-title">Summer travel fund</h2>
+    <p class="openux-insight-copy">You're making steady progress toward your next trip.</p>
+    <p class="openux-goal-amount">$6,250 <span style="color:#8a95a7;font-size:10px;font-weight:500">of $10,000</span></p>
+    <div class="openux-goal-track"><div class="openux-goal-progress"></div></div>
+    <div class="openux-goal-caption"><span>62% complete</span><span>Target: Jun 1</span></div>
+  </section>
+  <section class="openux-insight-card">
+    <span class="openux-tip-mark">i</span>
+    <h2 class="openux-insight-title">A little more saved, every month</h2>
+    <p class="openux-insight-copy">An automatic transfer of $150 each month could help you reach your goal 4 months sooner.</p>
+  </section>
+</aside>

@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="A browser-only OpenUX editor prototype with no writeback.">
-  <title>OpenUX Studio - No writeback</title>
+  <meta name="description" content="A local OpenUX editor prototype with project save support.">
+  <title>OpenUX Studio</title>
   <style>
     :root {
       color-scheme: light;
@@ -46,7 +46,7 @@
       height: 66px;
       display: flex;
       align-items: center;
-      gap: 24px;
+      gap: 16px;
       padding: 0 24px;
       background: var(--panel);
       border-bottom: 1px solid var(--line);
@@ -74,26 +74,16 @@
       font-weight: 800;
     }
 
-    .project-name {
-      padding-left: 22px;
-      border-left: 1px solid var(--line);
-      color: #465269;
-      font-weight: 600;
+    .workspace-context {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
     }
 
-    .topbar-spacer { flex: 1; }
+    .context-title { min-width: 0; }
 
-    .view-badge {
-      padding: 7px 10px;
-      border: 1px solid #d9e3ff;
-      border-radius: 999px;
-      color: #3e5dca;
-      background: #f2f5ff;
-      font-size: 11px;
-      font-weight: 750;
-      letter-spacing: .07em;
-      text-transform: uppercase;
-    }
+    .topbar-spacer { flex: 1; min-width: 8px; }
 
     .reset-button {
       padding: 7px 10px;
@@ -109,19 +99,24 @@
 
     .reset-button:hover { border-color: #a8b8ed; color: #3556cf; }
 
-    .avatar {
-      width: 32px;
-      height: 32px;
-      display: grid;
-      place-items: center;
-      border-radius: 50%;
-      color: #3153cc;
-      background: #e7edff;
+    .save-button {
+      padding: 8px 12px;
+      border: 1px solid #4569e8;
+      border-radius: 7px;
+      color: white;
+      background: #4569e8;
+      font-family: inherit;
+      font-size: 11px;
       font-weight: 700;
+      cursor: pointer;
     }
+    .save-button:hover:not(:disabled) { border-color: #3556cf; background: #3556cf; }
+    .save-button:disabled { border-color: #d8deea; color: #8b96a8; background: #eef1f6; cursor: default; }
+    .save-status { color: #657186; font-size: 11px; white-space: nowrap; }
+    .save-status.error { color: #a43b43; }
 
     .workspace {
-      min-height: calc(100vh - 66px);
+      height: calc(100vh - 66px);
       display: grid;
       grid-template-columns: 238px minmax(420px, 1fr) 292px;
     }
@@ -162,6 +157,22 @@
       background: #eef2ff;
       font-weight: 700;
     }
+    .create-screen-button {
+      width: 100%;
+      margin-top: 6px;
+      padding: 8px 10px;
+      border: 1px dashed #d9e1f0;
+      border-radius: 7px;
+      color: #536176;
+      background: white;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 650;
+      text-align: left;
+      cursor: pointer;
+    }
+    .create-screen-button:hover:not(:disabled) { border-color: #a8b8ed; color: #3556cf; background: #f8f9ff; }
+    .create-screen-button:disabled { color: #9aa4b5; background: #f6f7f9; cursor: default; }
 
     .side-icon {
       width: 17px;
@@ -197,28 +208,53 @@
     }
 
     .asset-row.selected { background: #f1f4ff; color: #3556cf; }
-    .asset-nav-item { display: flex; align-items: center; gap: 4px; margin: 2px 0; }
-    .asset-nav-item .asset-row { flex: 1; width: auto; min-width: 0; }
     .asset-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .asset-edit-button {
-      flex: none;
-      padding: 6px 7px;
-      border: 1px solid transparent;
-      border-radius: 6px;
-      color: #718096;
-      background: transparent;
-      font-family: inherit;
-      font-size: 10px;
-      cursor: pointer;
-    }
-    .asset-edit-button:hover, .asset-edit-button:focus-visible {
-      border-color: #d9e1f0;
-      color: #3556cf;
-      background: white;
-    }
     .asset-hint { margin: 0 10px 9px; color: #8a95a7; font-size: 10px; line-height: 1.45; }
     .asset-row[draggable="true"] { cursor: grab; }
     .asset-row[draggable="true"]:active { cursor: grabbing; }
+    .asset-library { display: grid; gap: 2px; }
+    .asset-category { min-width: 0; }
+    .asset-category > summary {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 32px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      color: #758197;
+      font-size: 11px;
+      font-weight: 650;
+      list-style: none;
+      cursor: pointer;
+    }
+    .asset-category > summary::-webkit-details-marker { display: none; }
+    .asset-category > summary::before {
+      width: 5px;
+      height: 5px;
+      flex: none;
+      border-right: 1.5px solid currentColor;
+      border-bottom: 1.5px solid currentColor;
+      content: "";
+      transform: rotate(-45deg);
+    }
+    .asset-category[open] > summary::before { transform: rotate(45deg); }
+    .asset-category > summary:hover { color: #3556cf; background: #f5f7fb; }
+    .asset-category-content {
+      margin-left: 9px;
+      padding-left: 7px;
+      border-left: 1px solid #e9edf4;
+    }
+    .asset-category-content > .asset-category { margin: 2px 0; }
+    .asset-kind-badge {
+      margin-left: auto;
+      padding: 2px 5px;
+      border: 1px solid #d9e3ff;
+      border-radius: 999px;
+      color: #536bb6;
+      background: #f5f7ff;
+      font-size: 9px;
+      font-weight: 650;
+    }
 
     .asset-dot {
       width: 25px;
@@ -234,19 +270,13 @@
 
     .canvas {
       min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
       padding: 25px 34px 40px;
       background:
         radial-gradient(circle at 50% 40%, rgba(255,255,255,.9), transparent 52%),
         var(--canvas);
-    }
-
-    .canvas-heading {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 20px;
-      max-width: 900px;
-      margin: 0 auto 20px;
     }
 
     .eyebrow {
@@ -257,36 +287,42 @@
     }
 
     h1 {
-      margin: 6px 0 0;
-      font-size: 21px;
+      overflow: hidden;
+      max-width: 260px;
+      margin: 2px 0 0;
+      font-size: 16px;
       letter-spacing: -.45px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .canvas-meta {
       display: flex;
+      flex: none;
+      align-items: center;
       gap: 8px;
-      margin-top: 5px;
     }
 
     .meta-chip {
-      padding: 6px 9px;
+      padding: 5px 8px;
       border: 1px solid #e2e8f0;
       border-radius: 6px;
       color: #657186;
       background: rgba(255,255,255,.8);
-      font-size: 11px;
+      font-size: 10px;
+      white-space: nowrap;
     }
 
     .stage {
-      min-height: 650px;
+      min-height: 0;
+      flex: 1;
       display: grid;
-      place-items: center;
-      padding: 28px;
-      border: 1px solid #e7ebf2;
-      border-radius: 14px;
-      background-color: rgba(255,255,255,.45);
-      background-image: radial-gradient(#d9e0eb 1px, transparent 1px);
-      background-size: 18px 18px;
+      place-items: stretch;
+      overflow: auto;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
     }
 
     .stage.drop-target {
@@ -295,14 +331,72 @@
       box-shadow: inset 0 0 0 2px rgba(69, 105, 232, .12);
     }
 
+    .canvas.asset-editing {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      align-content: start;
+      gap: 16px;
+    }
+    .canvas.asset-editing > .review-card,
+    .canvas.asset-editing > .workflow-output { grid-column: 1 / -1; width: 100%; }
+    .canvas.asset-editing > .stage {
+      min-width: 0;
+      min-height: 600px;
+      grid-column: 1 / -1;
+      grid-row: 2;
+      padding: 18px;
+    }
+    .asset-html-editor-panel, .asset-yaml-editor-panel {
+      min-width: 0;
+      min-height: 390px;
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      border: 1px solid #e7ebf2;
+      border-radius: 14px;
+      background: white;
+    }
+    .asset-html-editor-panel[hidden], .asset-yaml-editor-panel[hidden] { display: none; }
+    .canvas.asset-editing > .asset-html-editor-panel { grid-column: 1; grid-row: 1; }
+    .canvas.asset-editing > .asset-yaml-editor-panel { grid-column: 2; grid-row: 1; }
+    .asset-html-editor-heading, .asset-yaml-editor-heading {
+      margin: 0 0 12px;
+      color: #536176;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .asset-html-source, .asset-yaml-source {
+      width: 100%;
+      min-height: 300px;
+      flex: 1;
+      resize: vertical;
+      padding: 14px;
+      border: 1px solid #dfe4ed;
+      border-radius: 8px;
+      color: #25334a;
+      background: #fbfcfe;
+      font: 12px/1.6 Consolas, "SFMono-Regular", monospace;
+      tab-size: 2;
+      white-space: pre;
+    }
+    .asset-html-source:focus, .asset-yaml-source:focus { outline: 2px solid #b8c5f5; border-color: #8297ec; }
+    .asset-yaml-status {
+      min-height: 18px;
+      margin-top: 8px;
+      color: #657186;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    .asset-yaml-status.error { color: #a43b43; }
+
     .screen-preview {
-      width: min(100%, 420px);
-      min-height: 555px;
-      overflow: hidden;
-      border: 1px solid #e5e8ef;
-      border-radius: 15px;
+      width: 100%;
+      min-height: 100%;
+      overflow: auto;
+      border: 0;
+      border-radius: 0;
       background: #fff;
-      box-shadow: var(--shadow);
+      box-shadow: none;
     }
 
     .screen-preview.loading, .screen-preview.error {
@@ -325,6 +419,20 @@
     .asset-instance:hover { border-color: #dce3f5; }
     .asset-instance.selected { border-color: #8ba0f1; background: #f8f9ff; }
     .asset-instance:last-child { margin-bottom: 0; }
+    .asset-instance.dragging { opacity: .45; }
+    .asset-instance.drop-before::before, .asset-instance.drop-after::after {
+      position: absolute;
+      right: 0;
+      left: 0;
+      height: 3px;
+      border-radius: 3px;
+      background: var(--blue);
+      content: "";
+      pointer-events: none;
+    }
+    .asset-instance.drop-before::before { top: -3px; }
+    .asset-instance.drop-after::after { bottom: -3px; }
+    .asset-instance:focus-visible { outline: 2px solid #8297ec; outline-offset: 2px; }
 
     .asset-instance-label {
       display: block;
@@ -410,6 +518,19 @@
 
     .review-check { font-weight: 800; }
     .review-card strong { display: block; color: #2b5e56; font-size: 11px; }
+
+    @media (max-width: 800px) {
+      .canvas.asset-editing { grid-template-columns: minmax(0, 1fr); }
+      .canvas.asset-editing > .stage,
+      .canvas.asset-editing > .asset-html-editor-panel,
+      .canvas.asset-editing > .asset-yaml-editor-panel { grid-column: 1; }
+      .canvas.asset-editing > .asset-html-editor-panel { grid-row: 1; }
+      .canvas.asset-editing > .asset-yaml-editor-panel { grid-row: 2; }
+      .canvas.asset-editing > .stage { grid-row: 3; }
+      .canvas.asset-editing > .stage { min-height: 520px; }
+      .asset-html-editor-panel, .asset-yaml-editor-panel { min-height: 360px; }
+      .asset-html-source, .asset-yaml-source { min-height: 280px; }
+    }
 
     .panel-heading {
       margin: 0 0 20px;
@@ -543,26 +664,50 @@
 
     .review-action:hover { border-color: #a8b8ed; color: #3556cf; }
 
+    .delete-instance-button {
+      width: 100%;
+      margin-top: 18px;
+      padding: 8px 10px;
+      border: 1px solid #f0cfd2;
+      border-radius: 7px;
+      color: #a43b43;
+      background: #fffafa;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .delete-instance-button:hover { border-color: #dca5aa; background: #fff3f4; }
+
     @media (max-width: 1120px) {
       .workspace { grid-template-columns: 210px minmax(400px, 1fr); }
       .inspector { display: none; }
+      .canvas-meta { display: none; }
     }
 
     @media (max-width: 720px) {
-      .topbar { height: 58px; gap: 12px; padding: 0 14px; }
-      .brand { min-width: 0; }
-      .project-name { display: none; }
-      .view-badge, .avatar { display: none; }
-      .reset-button { padding: 6px 8px; }
-      .workspace { min-height: calc(100vh - 58px); display: block; }
+      .topbar { height: 58px; gap: 8px; padding: 0 10px; }
+      .brand { min-width: 30px; gap: 0; }
+      .brand > span:not(.brand-mark) { display: none; }
+      .workspace-context { flex: 1; }
+      .workspace-context .eyebrow { display: none; }
+      h1 { max-width: 150px; font-size: 14px; }
+      .topbar-spacer { display: none; }
+      .save-status { display: none; }
+      .reset-button { padding: 6px 7px; }
+      .save-button { padding: 7px 8px; }
+      .workspace { height: auto; min-height: calc(100vh - 58px); display: block; }
       .sidebar { display: none; }
-      .canvas { padding: 20px 12px; }
-      .canvas-heading { padding: 0 4px; }
-      .canvas-meta { display: none; }
-      .stage { min-height: auto; padding: 14px; }
-      .screen-preview { min-height: 0; }
+      .canvas { min-height: calc(100vh - 58px); padding: 20px 12px; }
+      .stage { min-height: 70vh; flex: none; }
+      .screen-preview { min-height: 70vh; }
       .form-content { padding: 35px 26px 28px; }
-      .view-badge { padding: 6px 8px; font-size: 9px; }
+    }
+
+    @media (max-width: 400px) {
+      .topbar { gap: 6px; padding: 0 8px; }
+      h1 { max-width: 90px; }
+      .reset-button, .save-button { padding: 6px; font-size: 10px; }
     }
   </style>
 </head>
@@ -570,11 +715,20 @@
   <a class="skip-link" href="#main">Skip to screen preview</a>
   <header class="topbar">
     <div class="brand"><span class="brand-mark">O</span><span>OpenUX Studio</span></div>
-    <div class="project-name" id="project-name">Loading project...</div>
+    <div class="workspace-context" id="workspace-context">
+      <div class="context-title">
+        <div class="eyebrow" id="breadcrumb">Screens</div>
+        <h1 id="screen-heading">Loading project...</h1>
+      </div>
+      <div class="canvas-meta">
+        <span class="meta-chip">Desktop preview</span>
+        <span class="meta-chip" id="theme-chip">Loading theme...</span>
+      </div>
+    </div>
     <div class="topbar-spacer"></div>
+    <button class="save-button" id="save-project" type="button" disabled>Save changes</button>
+    <span class="save-status" id="save-status" role="status" aria-live="polite">Loading project...</span>
     <button class="reset-button" id="reset-project" type="button">Reset from files</button>
-    <div class="view-badge">Interactive preview | No writeback</div>
-    <div class="avatar" aria-label="Human reviewer">R</div>
   </header>
 
   <div class="workspace">
@@ -584,9 +738,10 @@
 
       <div class="side-label">Screens</div>
       <div id="screen-nav"></div>
-      <div class="side-label" style="margin-top:26px">Assets to add</div>
-      <div class="asset-hint">Select or drag an asset onto the Screen.</div>
-      <div id="asset-nav"></div>
+      <button class="create-screen-button" id="create-screen" type="button" disabled>+ New Screen</button>
+      <div class="side-label" style="margin-top:26px">Asset library</div>
+      <div class="asset-hint">Click an asset to edit its template; drag it onto the Screen or into a named slot to place it.</div>
+      <div id="asset-nav" class="asset-library"></div>
 
       <div class="side-label" style="margin-top:26px">Project theme</div>
       <button class="side-item theme-option" id="theme-nav" type="button">
@@ -595,21 +750,21 @@
     </aside>
 
     <main class="canvas" id="main">
-      <div class="canvas-heading">
-        <div>
-          <div class="eyebrow" id="breadcrumb">OpenUX&nbsp; / &nbsp;Screens</div>
-          <h1 id="screen-heading">Loading project...</h1>
-        </div>
-        <div class="canvas-meta">
-          <span class="meta-chip">Desktop preview</span>
-          <span class="meta-chip" id="theme-chip">Loading theme...</span>
-        </div>
-      </div>
-
       <section class="stage" id="screen-stage" aria-label="Rendered Screen preview; drop an asset here to add it">
         <article class="screen-preview loading" id="screen-preview" aria-label="Rendered Screen preview">
           <div class="loading-message">Reading project files...</div>
         </article>
+      </section>
+
+      <section class="asset-html-editor-panel" id="asset-html-editor-panel" aria-label="Asset HTML editor" hidden>
+        <h2 class="asset-html-editor-heading">Asset HTML</h2>
+        <textarea class="asset-html-source" id="asset-html-source" aria-label="Asset HTML source" spellcheck="false"></textarea>
+      </section>
+
+      <section class="asset-yaml-editor-panel" id="asset-yaml-editor-panel" aria-label="Asset YAML editor" hidden>
+        <h2 class="asset-yaml-editor-heading">Asset YAML</h2>
+        <textarea class="asset-yaml-source" id="asset-yaml-source" aria-label="Asset YAML source" spellcheck="false"></textarea>
+        <div class="asset-yaml-status" id="asset-yaml-status" role="status" aria-live="polite"></div>
       </section>
 
       <div class="review-card" id="review-card" aria-live="polite"></div>

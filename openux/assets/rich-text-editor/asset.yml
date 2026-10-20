@@ -1,6 +1,7 @@
 id: rich-text-editor
 name: Rich Text Editor
 description: A visual mockup of a rich-text editing control.
+category: Content/Editors
 attributes:
   sample-content:
     type: string

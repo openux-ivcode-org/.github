@@ -1,0 +1,16 @@
+id: dashboard-overview
+name: Dashboard Overview
+description: A responsive dashboard content layout with welcome, metric, activity, and insight regions.
+category: Dashboards/Layout
+slots:
+  - id: welcome
+    name: Welcome
+  - id: metrics
+    name: Metrics
+  - id: activity
+    name: Recent activity
+  - id: insights
+    name: Account insights
+render:
+  type: html-reference
+  source: asset.html

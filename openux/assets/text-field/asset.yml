@@ -1,6 +1,7 @@
 id: text-field
 name: Text Field
 description: A reusable asset for entering text.
+category: Forms
 attributes:
   label:
     type: string

@@ -1,0 +1,17 @@
+{
+  "name": "openux-editor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local OpenUX editor prototype and example project",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "yaml": "^2.8.1"
+  }
+}

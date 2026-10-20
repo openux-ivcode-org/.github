@@ -1,0 +1,14 @@
+id: dashboard-layout
+name: Dashboard Layout
+description: A responsive application shell with a full-width header, side navigation, and main content area.
+category: Dashboards/Layout
+slots:
+  - id: header
+    name: Header
+  - id: navigation
+    name: Navigation
+  - id: content
+    name: Main content
+render:
+  type: html-reference
+  source: asset.html

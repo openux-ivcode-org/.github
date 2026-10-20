@@ -1,0 +1,7 @@
+id: dashboard-header
+name: Dashboard Header
+description: A branded header with a search affordance and account profile.
+category: Dashboards/Components
+render:
+  type: html-reference
+  source: asset.html
