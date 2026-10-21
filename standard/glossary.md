@@ -28,7 +28,7 @@ A project-level set of visual properties applied across all screens, such as col
 
 ### Workflow
 
-A defined user action or sequence of actions, together with the expected system behavior and observable outcomes. A workflow may involve one or more screens, interactions, and state changes.
+A reusable graph of steps and outcomes that describes behavior initiated by an interaction, including transitions between Screens. The proposed YAML representation is documented in `workflow.md`.
 
 ### State
 

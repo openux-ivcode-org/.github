@@ -1,8 +1,29 @@
 id: login
 name: Login
-description: A local preview of the sign-in workflow.
+description: Sign in and continue to the account overview.
+entry: validate-input
+
 steps:
-  - name: Validate credentials
-    message: The email and password fields would be validated here.
-  - name: Authenticate
-    message: Authentication requires an application backend and is not performed by this preview.
+  - id: validate-input
+    description: Check the submitted credentials.
+    transitions:
+      - when: required fields are missing
+        next: correct-input
+      - when: credentials are complete
+        next: authenticate
+
+  - id: correct-input
+    description: Ask the user to correct the fields and submit again.
+    transitions:
+      - when: the user resubmits
+        next: validate-input
+
+  - id: authenticate
+    description: Check the credentials.
+    transitions:
+      - when: credentials are accepted
+        to: home
+      - when: credentials are rejected and retries remain
+        next: correct-input
+      - when: the retry limit is reached
+        result: Explain the lockout and recovery options.

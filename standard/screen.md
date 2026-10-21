@@ -68,7 +68,7 @@ assets:
                 workflow: login
 ```
 
-The prototype stores child asset instances under the layout's named `content` slot. The workflow interaction is illustrative; the interaction and action schema remains open.
+The prototype stores child asset instances under the layout's named `content` slot. Workflow invocation from an asset instance is described further in `workflow.md`; its proposed representation is not yet normative.
 
 ## Questions to Explore
 

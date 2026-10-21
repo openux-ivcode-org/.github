@@ -29,6 +29,9 @@ let activeInstancePath = [];
 let viewingAssetTemplate = false;
 let viewingTheme = false;
 let viewingProject = false;
+let viewingWorkflow = false;
+let activeWorkflowId = null;
+let activeWorkflowStepId = null;
 let assetEditorRestoreId = null;
 let paletteAssetDropHandled = false;
 let reviewedInSession = false;
@@ -45,6 +48,7 @@ let assetPreviewTimer = null;
 let assetPreviewVersion = 0;
 let editorFieldId = 0;
 let assetStyleScopeId = 0;
+let workflowDiagramResizeObserver = null;
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -202,6 +206,66 @@ function validateTheme(data, source) {
   }
 }
 
+function validateWorkflow(data, workflowId) {
+  const source = `Workflow "${workflowId}"`;
+  if (!data || Array.isArray(data) || typeof data !== "object") {
+    throw new Error(`${source} must be a YAML mapping.`);
+  }
+  if (data.id !== workflowId) {
+    throw new Error(`${source} id must remain "${workflowId}".`);
+  }
+  if (typeof data.entry !== "string" || !data.entry) {
+    throw new Error(`${source} must define an entry step id.`);
+  }
+  if (!Array.isArray(data.steps) || data.steps.length === 0) {
+    throw new Error(`${source} must define at least one step.`);
+  }
+
+  const stepIds = new Set();
+  for (const step of data.steps) {
+    if (!step || Array.isArray(step) || typeof step !== "object" ||
+        typeof step.id !== "string" || !/^[a-z][a-z0-9-]*$/.test(step.id)) {
+      throw new Error(`${source} steps must have ids using lowercase letters, numbers, and hyphens.`);
+    }
+    if (stepIds.has(step.id)) throw new Error(`${source} defines step "${step.id}" more than once.`);
+    stepIds.add(step.id);
+  }
+  if (!stepIds.has(data.entry)) {
+    throw new Error(`${source} entry references unknown step "${data.entry}".`);
+  }
+
+  const screenIds = new Set(screens.map((screen) => screen.id));
+  for (const step of data.steps) {
+    if (!Array.isArray(step.transitions) || step.transitions.length === 0) {
+      throw new Error(`${source} step "${step.id}" must define at least one transition.`);
+    }
+    for (const [index, transition] of step.transitions.entries()) {
+      if (!transition || Array.isArray(transition) || typeof transition !== "object") {
+        throw new Error(`${source} step "${step.id}" transition ${index + 1} must be a mapping.`);
+      }
+      if (typeof transition.when !== "string" || !transition.when.trim()) {
+        throw new Error(`${source} step "${step.id}" transition ${index + 1} must describe when it applies.`);
+      }
+      const destinations = ["next", "to", "result"].filter((key) => Object.hasOwn(transition, key));
+      if (destinations.length !== 1) {
+        throw new Error(`${source} step "${step.id}" transition ${index + 1} must define exactly one of next, to, or result.`);
+      }
+      if (Object.hasOwn(transition, "next") &&
+          (typeof transition.next !== "string" || !stepIds.has(transition.next))) {
+        throw new Error(`${source} step "${step.id}" transition ${index + 1} references an unknown next step.`);
+      }
+      if (Object.hasOwn(transition, "to") &&
+          (typeof transition.to !== "string" || !screenIds.has(transition.to))) {
+        throw new Error(`${source} step "${step.id}" transition ${index + 1} references an unknown Screen.`);
+      }
+      if (Object.hasOwn(transition, "result") &&
+          (typeof transition.result !== "string" || !transition.result.trim())) {
+        throw new Error(`${source} step "${step.id}" transition ${index + 1} must describe its result.`);
+      }
+    }
+  }
+}
+
 function getDefinedThemeModes() {
   const modes = theme?.modes;
   const definedModes = themeModeNames.filter((mode) =>
@@ -258,6 +322,10 @@ async function loadProject() {
   for (const template of assets.values()) {
     clearTimeout(template.yamlTimer);
     template.yamlParseVersion += 1;
+  }
+  for (const workflow of workflows.values()) {
+    clearTimeout(workflow.yamlTimer);
+    workflow.yamlParseVersion += 1;
   }
   createdScreenFiles.clear();
   setPreviewMessage("loading", "Reading project files...");
@@ -322,20 +390,39 @@ async function loadProject() {
           stylesheetBase: stylesDirectory ? safeProjectUrl(stylesDirectory, themeBase) : themeBase
         };
       })(),
-      Promise.all((project.workflows || []).map(async (entry) => ({
-        id: entry.id,
-        data: await loadYaml(entry.file)
-      })))
+      Promise.all((project.workflows || []).map(async (entry) => {
+        const [data, yamlSource] = await Promise.all([
+          loadYaml(entry.file),
+          loadText(entry.file)
+        ]);
+        return {
+          id: entry.id,
+          file: entry.file,
+          data,
+          yamlSource,
+          yamlSourceMode: "source",
+          yamlParseVersion: 0,
+          yamlSerializeVersion: 0,
+          yamlTimer: null,
+          yamlStatus: { message: "", isError: false }
+        };
+      }))
     ]);
 
     screens = loadedScreens;
     assets = new Map(loadedAssets.map((asset) => [asset.id, asset]));
-    workflows = new Map(loadedWorkflows.map((workflow) => [workflow.id, workflow.data]));
+    workflows = new Map(loadedWorkflows.map((workflow) => [workflow.id, workflow]));
+    for (const workflow of workflows.values()) {
+      validateWorkflow(workflow.data, workflow.id);
+    }
     theme = loadedTheme.data;
     themeStylesheet = loadedTheme.stylesheet;
     themeStylesheetBase = loadedTheme.stylesheetBase;
     viewingTheme = false;
     viewingProject = false;
+    viewingWorkflow = false;
+    activeWorkflowId = null;
+    activeWorkflowStepId = null;
     hasEdits = false;
     dirtyFiles.clear();
     invalidYamlFiles.clear();
@@ -368,12 +455,14 @@ function applyTheme() {
 }
 
 function renderNavigation() {
-  if (!viewingAssetTemplate && !viewingTheme && !viewingProject) {
+  if (!viewingAssetTemplate && !viewingTheme && !viewingProject && !viewingWorkflow) {
     byId("breadcrumb").textContent = "Screens";
   }
   const screenNav = byId("screen-nav");
+  const workflowNav = byId("workflow-nav");
   const assetNav = byId("asset-nav");
   screenNav.replaceChildren();
+  workflowNav.replaceChildren();
   assetNav.replaceChildren();
 
   screens.forEach((screen, index) => {
@@ -387,6 +476,16 @@ function renderNavigation() {
     button.addEventListener("click", () => renderScreen(index));
     screenNav.append(button);
   });
+
+  for (const workflow of workflows.values()) {
+    const button = element("button", "side-item workflow-option");
+    button.type = "button";
+    button.dataset.workflowId = workflow.id;
+    button.append(element("span", "side-icon", "W"));
+    button.append(element("span", "", workflow.data.name || workflow.id));
+    button.addEventListener("click", () => renderWorkflowEditor(workflow.id));
+    workflowNav.append(button);
+  }
 
   const categories = { children: new Map(), assets: [] };
   for (const asset of assets.values()) {
@@ -742,6 +841,11 @@ function clearDropIndicators() {
   }
 }
 
+function clearWorkflowDiagramResizeObserver() {
+  workflowDiagramResizeObserver?.disconnect();
+  workflowDiagramResizeObserver = null;
+}
+
 function findAssetInstances(root, instances = []) {
   for (const node of root.querySelectorAll(".asset-instance")) {
     instances.push(node);
@@ -785,19 +889,26 @@ function showAddAssetError(error) {
 async function renderScreen(index) {
   const selected = screens[index];
   if (!selected) return;
+  clearWorkflowDiagramResizeObserver();
   closeAssetContextMenu();
   clearTimeout(assetPreviewTimer);
   assetPreviewTimer = null;
   assetPreviewVersion += 1;
   byId("main").classList.remove("asset-editing");
+  byId("main").classList.remove("workflow-editing");
   byId("asset-html-editor-panel").hidden = true;
   byId("asset-html-source").oninput = null;
   byId("asset-yaml-editor-panel").hidden = true;
   byId("asset-yaml-source").oninput = null;
+  byId("workflow-yaml-editor-panel").hidden = true;
+  byId("workflow-yaml-source").oninput = null;
   activeScreenIndex = index;
   viewingAssetTemplate = false;
   viewingTheme = false;
   viewingProject = false;
+  viewingWorkflow = false;
+  activeWorkflowId = null;
+  activeWorkflowStepId = null;
   activeAssetId = null;
   activeInstancePath = [];
   hideWorkflowOutput();
@@ -845,18 +956,25 @@ async function renderScreen(index) {
 
 function renderProjectOverview() {
   if (!project) return;
+  clearWorkflowDiagramResizeObserver();
   closeAssetContextMenu();
   clearTimeout(assetPreviewTimer);
   assetPreviewTimer = null;
   assetPreviewVersion += 1;
   byId("main").classList.remove("asset-editing");
+  byId("main").classList.remove("workflow-editing");
   byId("asset-html-editor-panel").hidden = true;
   byId("asset-html-source").oninput = null;
   byId("asset-yaml-editor-panel").hidden = true;
   byId("asset-yaml-source").oninput = null;
+  byId("workflow-yaml-editor-panel").hidden = true;
+  byId("workflow-yaml-source").oninput = null;
   viewingAssetTemplate = false;
   viewingTheme = false;
   viewingProject = true;
+  viewingWorkflow = false;
+  activeWorkflowId = null;
+  activeWorkflowStepId = null;
   activeAssetId = null;
   activeInstancePath = [];
   hideWorkflowOutput();
@@ -926,11 +1044,14 @@ function renderProjectOverview() {
   const workflowList = element("div", "project-overview-workflow-list");
   if (workflows.size) {
     for (const [id, workflow] of workflows) {
-      const workflowItem = element("div", "project-overview-workflow");
+      const workflowItem = element("button", "project-overview-workflow");
+      workflowItem.type = "button";
+      workflowItem.setAttribute("aria-label", `Edit workflow ${workflow.data.name || id}`);
       workflowItem.append(
-        element("span", "project-overview-workflow-name", workflow.name || id),
+        element("span", "project-overview-workflow-name", workflow.data.name || id),
         element("span", "project-overview-workflow-id", id)
       );
+      workflowItem.addEventListener("click", () => renderWorkflowEditor(id));
       workflowList.append(workflowItem);
     }
   } else {
@@ -951,18 +1072,694 @@ function renderProjectOverview() {
   renderInspector();
 }
 
+function renderWorkflowEditor(workflowId) {
+  const workflow = workflows.get(workflowId);
+  if (!workflow) return;
+  const switchingWorkflow = activeWorkflowId !== workflowId;
+  closeAssetContextMenu();
+  clearTimeout(assetPreviewTimer);
+  assetPreviewTimer = null;
+  assetPreviewVersion += 1;
+  byId("main").classList.remove("asset-editing");
+  byId("main").classList.add("workflow-editing");
+  byId("asset-html-editor-panel").hidden = true;
+  byId("asset-html-source").oninput = null;
+  byId("asset-yaml-editor-panel").hidden = true;
+  byId("asset-yaml-source").oninput = null;
+  byId("workflow-yaml-editor-panel").hidden = false;
+  viewingAssetTemplate = false;
+  viewingTheme = false;
+  viewingProject = false;
+  viewingWorkflow = true;
+  activeAssetId = null;
+  activeInstancePath = [];
+  activeWorkflowId = workflowId;
+  if (switchingWorkflow || !workflow.data.steps?.some((step) => step.id === activeWorkflowStepId)) {
+    activeWorkflowStepId = workflow.data.entry || workflow.data.steps?.[0]?.id || null;
+  }
+  hideWorkflowOutput();
+  updateNavigationSelection();
+  updateScreenDomContext(null);
+  byId("screen-stage").setAttribute("aria-label", `Workflow diagram for ${workflow.data.name || workflowId}`);
+  byId("screen-heading").textContent = workflow.data.name || workflowId;
+  byId("breadcrumb").textContent = "Workflows";
+  const preview = byId("screen-preview");
+  preview.className = "screen-preview workflow-preview";
+  preview.setAttribute("aria-label", `Workflow diagram for ${workflow.data.name || workflowId}`);
+  byId("workflow-yaml-source").setAttribute(
+    "aria-label",
+    `YAML source for workflow ${workflow.data.name || workflowId}`
+  );
+  byId("workflow-yaml-source").value = workflow.yamlSource;
+  byId("workflow-yaml-status").textContent = workflow.yamlStatus.message;
+  byId("workflow-yaml-status").classList.toggle("error", workflow.yamlStatus.isError);
+  byId("workflow-yaml-source").oninput = () => editWorkflowYaml(workflow);
+  renderWorkflowDiagram(workflow);
+  renderInspector();
+}
+
+function renderWorkflowDiagram(workflow) {
+  clearWorkflowDiagramResizeObserver();
+  const preview = byId("screen-preview");
+  preview.replaceChildren();
+  try {
+    validateWorkflow(workflow.data, workflow.id);
+  } catch (error) {
+    preview.append(element("div", "workflow-diagram-error", error.message || String(error)));
+    return;
+  }
+
+  const stepLayers = new Map([[workflow.data.entry, 0]]);
+  const pendingSteps = [workflow.data.entry];
+  for (let index = 0; index < pendingSteps.length; index += 1) {
+    const step = workflow.data.steps.find((entry) => entry.id === pendingSteps[index]);
+    const nextLayer = stepLayers.get(step.id) + 1;
+    for (const transition of step.transitions) {
+      if (transition.next && !stepLayers.has(transition.next)) {
+        stepLayers.set(transition.next, nextLayer);
+        pendingSteps.push(transition.next);
+      }
+    }
+  }
+  const lastReachableLayer = Math.max(...stepLayers.values());
+  for (const step of workflow.data.steps) {
+    if (!stepLayers.has(step.id)) stepLayers.set(step.id, lastReachableLayer + 1);
+  }
+  const maxStepLayer = Math.max(...stepLayers.values());
+  const stepRows = new Map();
+  for (const step of workflow.data.steps) {
+    const layer = stepLayers.get(step.id);
+    if (!stepRows.has(layer)) stepRows.set(layer, []);
+    stepRows.get(layer).push(step);
+  }
+  const originalStepOrder = new Map(workflow.data.steps.map((step, index) => [step.id, index]));
+  const average = (values) => values.length
+    ? values.reduce((total, value) => total + value, 0) / values.length
+    : null;
+  for (let pass = 0; pass < 4; pass += 1) {
+    for (let layer = 1; layer <= maxStepLayer; layer += 1) {
+      const neighbors = stepRows.get(layer - 1) || [];
+      const neighborOrder = new Map(neighbors.map((step, index) => [step.id, index]));
+      const row = stepRows.get(layer);
+      const previousOrder = new Map(row.map((step, index) => [step.id, index]));
+      const barycenter = (step) => {
+        const parents = neighbors.flatMap((parent) =>
+          parent.transitions
+            .filter((transition) => transition.next === step.id)
+            .map(() => neighborOrder.get(parent.id))
+        );
+        return average(parents) ?? previousOrder.get(step.id);
+      };
+      row.sort((left, right) =>
+        barycenter(left) - barycenter(right) ||
+        originalStepOrder.get(left.id) - originalStepOrder.get(right.id)
+      );
+    }
+    for (let layer = maxStepLayer - 1; layer >= 0; layer -= 1) {
+      const neighbors = stepRows.get(layer + 1) || [];
+      const neighborOrder = new Map(neighbors.map((step, index) => [step.id, index]));
+      const row = stepRows.get(layer);
+      const previousOrder = new Map(row.map((step, index) => [step.id, index]));
+      const barycenter = (step) => {
+        const children = step.transitions
+          .filter((transition) => neighborOrder.has(transition.next))
+          .map((transition) => neighborOrder.get(transition.next));
+        return average(children) ?? previousOrder.get(step.id);
+      };
+      row.sort((left, right) =>
+        barycenter(left) - barycenter(right) ||
+        originalStepOrder.get(left.id) - originalStepOrder.get(right.id)
+      );
+    }
+  }
+
+  const destinations = new Map();
+  for (const step of workflow.data.steps) {
+    for (const [transitionIndex, transition] of step.transitions.entries()) {
+      if (transition.next) continue;
+      const key = transition.to ? `screen:${transition.to}` : `result:${step.id}:${transitionIndex}`;
+      if (!destinations.has(key)) {
+        destinations.set(key, {
+          key,
+          kind: transition.to ? "screen" : "result",
+          id: transition.to || transition.result,
+          label: transition.to
+            ? screens.find((screen) => screen.id === transition.to)?.data.name || transition.to
+            : transition.result
+        });
+      }
+    }
+  }
+  const nodeWidth = 250;
+  const stepHeight = 154;
+  const destinationHeight = 120;
+  const horizontalGap = 52;
+  const rowSpacing = 226;
+  const margin = 36;
+  const destinationLayer = maxStepLayer + 1;
+  const bypassSides = new Map();
+  let leftBypassCount = 0;
+  let rightBypassCount = 0;
+  for (const step of workflow.data.steps) {
+    const sourceLayer = stepLayers.get(step.id);
+    const row = stepRows.get(sourceLayer);
+    const sourceIndex = row.findIndex((entry) => entry.id === step.id);
+    for (const [transitionIndex, transition] of step.transitions.entries()) {
+      const targetLayer = transition.next ? stepLayers.get(transition.next) : destinationLayer;
+      if (targetLayer === sourceLayer + 1) continue;
+      const side = sourceIndex < row.length / 2 ? "left" : "right";
+      if (!bypassSides.has(step.id)) bypassSides.set(step.id, new Map());
+      bypassSides.get(step.id).set(transitionIndex, side);
+      if (side === "left") leftBypassCount += 1;
+      else rightBypassCount += 1;
+    }
+  }
+  const rowWidth = (count) => count * nodeWidth + Math.max(0, count - 1) * horizontalGap;
+  const contentWidth = Math.max(
+    ...[...stepRows.values()].map((steps) => rowWidth(steps.length)),
+    rowWidth(destinations.size)
+  );
+  const leftBypassGutter = leftBypassCount ? 250 + leftBypassCount * 14 : 0;
+  const rightBypassGutter = rightBypassCount ? 250 + rightBypassCount * 14 : 0;
+  const contentStart = margin + leftBypassGutter;
+  const contentEnd = contentStart + contentWidth;
+  const width = margin + leftBypassGutter + contentWidth + rightBypassGutter + margin;
+  const stepPositions = new Map();
+  for (const [layer, steps] of stepRows) {
+    const rowStart = contentStart + (contentWidth - rowWidth(steps.length)) / 2;
+    steps.forEach((step, index) => {
+      stepPositions.set(step.id, {
+        x: rowStart + index * (nodeWidth + horizontalGap),
+        y: margin + layer * rowSpacing,
+        width: nodeWidth,
+        height: stepHeight,
+        layer
+      });
+    });
+  }
+
+  const destinationPositions = new Map();
+  const destinationList = [...destinations.values()];
+  const originalDestinationOrder = new Map(destinationList.map((destination, index) => [destination.key, index]));
+  const destinationBarycenter = (destination) => {
+    const sourceCenters = [];
+    for (const step of workflow.data.steps) {
+      for (const [transitionIndex, transition] of step.transitions.entries()) {
+        const key = transition.to
+          ? `screen:${transition.to}`
+          : `result:${step.id}:${transitionIndex}`;
+        if (key === destination.key) {
+          sourceCenters.push(stepPositions.get(step.id).x + nodeWidth / 2);
+        }
+      }
+    }
+    return average(sourceCenters) ?? originalDestinationOrder.get(destination.key);
+  };
+  destinationList.sort((left, right) =>
+    destinationBarycenter(left) - destinationBarycenter(right) ||
+    originalDestinationOrder.get(left.key) - originalDestinationOrder.get(right.key)
+  );
+  const destinationStart = contentStart + (contentWidth - rowWidth(destinationList.length)) / 2;
+  destinationList.forEach((destination, index) => {
+    destinationPositions.set(destination.key, {
+      x: destinationStart + index * (nodeWidth + horizontalGap),
+      y: margin + destinationLayer * rowSpacing,
+      width: nodeWidth,
+      height: destinationHeight,
+      layer: destinationLayer
+    });
+  });
+
+  const height = margin * 2 + maxStepLayer * rowSpacing +
+    (destinations.size ? destinationHeight : stepHeight);
+  const diagram = element("div", "workflow-diagram-scroll");
+  const canvas = element("div", "workflow-diagram");
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.classList.add("workflow-diagram-edges");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", String(width));
+  svg.setAttribute("height", String(height));
+  svg.setAttribute("aria-hidden", "true");
+  const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+  const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+  marker.id = "workflow-arrow";
+  marker.setAttribute("markerWidth", "10");
+  marker.setAttribute("markerHeight", "10");
+  marker.setAttribute("refX", "8");
+  marker.setAttribute("refY", "5");
+  marker.setAttribute("orient", "auto");
+  marker.setAttribute("markerUnits", "strokeWidth");
+  const arrow = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  arrow.setAttribute("d", "M0,0 L0,10 L9,5 z");
+  arrow.classList.add("workflow-edge-arrow");
+  marker.append(arrow);
+  defs.append(marker);
+  const selectedMarker = marker.cloneNode(true);
+  selectedMarker.id = "workflow-arrow-selected";
+  selectedMarker.querySelector("path").classList.add("workflow-edge-arrow-selected");
+  defs.append(selectedMarker);
+  svg.append(defs);
+
+  let leftBypassIndex = 0;
+  let rightBypassIndex = 0;
+  const leftLaneBase = contentStart - 18;
+  const rightLaneBase = contentEnd + 18;
+  const leftLabelX = leftLaneBase - Math.max(0, leftBypassCount - 1) * 14 - 8;
+  const rightLabelX = rightLaneBase + Math.max(0, rightBypassCount - 1) * 14 + 8;
+  for (const step of workflow.data.steps) {
+    const source = stepPositions.get(step.id);
+    for (const [transitionIndex, transition] of step.transitions.entries()) {
+      const targetPosition = transition.next
+        ? stepPositions.get(transition.next)
+        : destinationPositions.get(transition.to
+          ? `screen:${transition.to}`
+          : `result:${step.id}:${transitionIndex}`);
+      if (!targetPosition) continue;
+      const targetLayer = transition.next
+        ? stepLayers.get(transition.next)
+        : destinationLayer;
+      const isAdjacentForward = targetLayer === source.layer + 1;
+      const selected = step.id === activeWorkflowStepId;
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.classList.add("workflow-edge");
+      path.classList.toggle("selected", selected);
+      let labelX;
+      let labelY;
+      let labelAnchor;
+      if (isAdjacentForward) {
+        const sourceX = source.x + source.width / 2;
+        const sourceY = source.y + source.height;
+        const targetX = targetPosition.x + targetPosition.width / 2;
+        const targetY = targetPosition.y - 10;
+        path.setAttribute(
+          "d",
+          `M ${sourceX} ${sourceY} C ${sourceX} ${sourceY + 36}, ${targetX} ${targetY - 36}, ${targetX} ${targetY}`
+        );
+        labelX = (sourceX + targetX) / 2;
+        labelY = (sourceY + targetY) / 2;
+      } else {
+        const sourceY = source.y + source.height / 2;
+        const targetY = targetPosition.y + targetPosition.height / 2;
+        const side = bypassSides.get(step.id).get(transitionIndex);
+        if (side === "left") {
+          const laneX = leftLaneBase - leftBypassIndex * 14;
+          const sourceX = source.x;
+          const targetX = targetPosition.x - 10;
+          path.setAttribute(
+            "d",
+            `M ${sourceX} ${sourceY} C ${laneX} ${sourceY}, ${laneX} ${targetY}, ${targetX} ${targetY}`
+          );
+          labelX = leftLabelX;
+          labelAnchor = "end";
+          leftBypassIndex += 1;
+        } else {
+          const laneX = rightLaneBase + rightBypassIndex * 14;
+          const sourceX = source.x + source.width;
+          const targetX = targetPosition.x + targetPosition.width + 10;
+          path.setAttribute(
+            "d",
+            `M ${sourceX} ${sourceY} C ${laneX} ${sourceY}, ${laneX} ${targetY}, ${targetX} ${targetY}`
+          );
+          labelX = rightLabelX;
+          labelAnchor = "start";
+          rightBypassIndex += 1;
+        }
+        labelY = (sourceY + targetY) / 2;
+      }
+      path.setAttribute(
+        "marker-end",
+        `url(#workflow-arrow${selected ? "-selected" : ""})`
+      );
+      svg.append(path);
+
+      const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      label.classList.add("workflow-edge-label");
+      label.classList.toggle("selected", selected);
+      label.setAttribute("x", String(labelX));
+      label.setAttribute(
+        "y",
+        String(labelY - 5 + (transitionIndex - (step.transitions.length - 1) / 2) * 12)
+      );
+      if (labelAnchor) label.setAttribute("text-anchor", labelAnchor);
+      label.textContent = transition.when.length > 34
+        ? `${transition.when.slice(0, 31)}...`
+        : transition.when;
+      svg.append(label);
+    }
+  }
+  canvas.append(svg);
+
+  for (const step of workflow.data.steps) {
+    const position = stepPositions.get(step.id);
+    const node = element("button", "workflow-diagram-node workflow-step-node");
+    node.type = "button";
+    node.style.left = `${position.x}px`;
+    node.style.top = `${position.y}px`;
+    node.style.width = `${position.width}px`;
+    node.style.height = `${position.height}px`;
+    node.classList.toggle("selected", step.id === activeWorkflowStepId);
+    node.setAttribute("aria-pressed", String(step.id === activeWorkflowStepId));
+    node.setAttribute("aria-label", `Edit workflow step ${step.id}`);
+    node.title = step.description || step.id;
+    if (workflow.data.entry === step.id) node.append(element("span", "workflow-node-entry", "ENTRY"));
+    node.append(element("strong", "workflow-node-title", step.id));
+    node.append(element("span", "workflow-node-description", step.description || "No step description."));
+    const transitionList = element("span", "workflow-node-transition-count");
+    transitionList.textContent = `${step.transitions.length} transition${step.transitions.length === 1 ? "" : "s"}`;
+    node.append(transitionList);
+    node.addEventListener("click", () => {
+      activeWorkflowStepId = step.id;
+      renderWorkflowDiagram(workflow);
+      renderInspector();
+    });
+    canvas.append(node);
+  }
+
+  for (const destination of destinations.values()) {
+    const position = destinationPositions.get(destination.key);
+    const node = element(
+      "div",
+      `workflow-diagram-node ${destination.kind === "screen" ? "workflow-screen-node" : "workflow-result-node"}`
+    );
+    node.style.left = `${position.x}px`;
+    node.style.top = `${position.y}px`;
+    node.style.width = `${position.width}px`;
+    node.style.height = `${position.height}px`;
+    node.title = destination.label;
+    node.append(
+      element("span", "workflow-node-kind", destination.kind === "screen" ? "SCREEN" : "RESULT"),
+      element("strong", "workflow-node-title", destination.label)
+    );
+    if (destination.kind === "screen") node.append(element("span", "workflow-node-description", destination.id));
+    canvas.append(node);
+  }
+  diagram.append(canvas);
+  preview.append(diagram);
+  const fitDiagram = () => {
+    const availableWidth = diagram.clientWidth;
+    const availableHeight = diagram.clientHeight;
+    if (!availableWidth || !availableHeight) return;
+    const scale = Math.min(1, availableWidth / width, availableHeight / height);
+    canvas.style.transform = `scale(${scale})`;
+  };
+  fitDiagram();
+  workflowDiagramResizeObserver = new ResizeObserver(fitDiagram);
+  workflowDiagramResizeObserver.observe(diagram);
+}
+
+function renderWorkflowDetails(panel) {
+  const workflow = workflows.get(activeWorkflowId);
+  if (!workflow) return;
+  appendSection(panel, "Workflow");
+  appendDetail(panel, "ID", workflow.id);
+  appendEditableField(panel, "Name", workflow.data.name || workflow.id, (value) => {
+    workflow.data.name = value;
+    byId("screen-heading").textContent = value || workflow.id;
+    markWorkflowEdited(workflow);
+    renderNavigation();
+    renderWorkflowDiagram(workflow);
+    renderInspector();
+  });
+  appendEditableField(panel, "Description", workflow.data.description || "", (value) => {
+    workflow.data.description = value;
+    markWorkflowEdited(workflow);
+  }, { multiline: true });
+  const stepIds = workflow.data.steps.map((step) => step.id);
+  appendEditableField(panel, "Entry step", workflow.data.entry, (value) => {
+    workflow.data.entry = value;
+    activeWorkflowStepId = value;
+    markWorkflowEdited(workflow);
+    renderWorkflowDiagram(workflow);
+    renderInspector();
+  }, { selectOptions: stepIds });
+
+  const addStep = element("button", "workflow-editor-action", "+ Add step");
+  addStep.type = "button";
+  addStep.addEventListener("click", () => addWorkflowStep(workflow));
+  panel.append(addStep);
+
+  const step = workflow.data.steps.find((entry) => entry.id === activeWorkflowStepId);
+  if (!step) return;
+  appendSection(panel, "Selected step");
+  appendEditableField(panel, "Step ID", step.id, (value) => {
+    const updatedId = value.trim();
+    if (!/^[a-z][a-z0-9-]*$/.test(updatedId)) {
+      showWorkflowOutput("Invalid step ID", "Use lowercase letters, numbers, and hyphens; the ID must start with a letter.");
+      renderInspector();
+      return;
+    }
+    if (workflow.data.steps.some((entry) => entry.id === updatedId && entry !== step)) {
+      showWorkflowOutput("Duplicate step ID", `A step named "${updatedId}" already exists.`);
+      renderInspector();
+      return;
+    }
+    const previousId = step.id;
+    step.id = updatedId;
+    if (workflow.data.entry === previousId) workflow.data.entry = updatedId;
+    for (const entry of workflow.data.steps) {
+      for (const transition of entry.transitions || []) {
+        if (transition.next === previousId) transition.next = updatedId;
+      }
+    }
+    activeWorkflowStepId = updatedId;
+    markWorkflowEdited(workflow);
+    renderWorkflowDiagram(workflow);
+    renderInspector();
+  });
+  appendEditableField(panel, "Description", step.description || "", (value) => {
+    step.description = value;
+    markWorkflowEdited(workflow);
+    renderWorkflowDiagram(workflow);
+  }, { multiline: true });
+
+  appendSection(panel, "Transitions");
+  step.transitions.forEach((transition, index) => renderWorkflowTransition(panel, workflow, step, transition, index));
+  const addTransition = element("button", "workflow-editor-action", "+ Add transition");
+  addTransition.type = "button";
+  addTransition.addEventListener("click", () => {
+    step.transitions.push({
+      when: "Describe a condition",
+      result: "Describe the outcome."
+    });
+    markWorkflowEdited(workflow);
+    renderWorkflowDiagram(workflow);
+    renderInspector();
+  });
+  panel.append(addTransition);
+
+  const removeStep = element("button", "delete-instance-button workflow-remove-step", "Remove step");
+  removeStep.type = "button";
+  removeStep.addEventListener("click", () => removeWorkflowStep(workflow, step));
+  panel.append(removeStep);
+}
+
+function renderWorkflowTransition(panel, workflow, step, transition, index) {
+  const card = element("div", "workflow-transition-editor");
+  const heading = element("div", "workflow-transition-heading");
+  heading.append(element("strong", "", `Transition ${index + 1}`));
+  const remove = element("button", "workflow-transition-remove", "Remove");
+  remove.type = "button";
+  remove.addEventListener("click", () => {
+    step.transitions.splice(index, 1);
+    markWorkflowEdited(workflow);
+    renderWorkflowDiagram(workflow);
+    renderInspector();
+  });
+  heading.append(remove);
+  card.append(heading);
+  appendEditableField(card, "When", transition.when, (value) => {
+    transition.when = value;
+    markWorkflowEdited(workflow);
+    renderWorkflowDiagram(workflow);
+  });
+  const targetType = transition.next ? "next" : transition.to ? "to" : "result";
+  appendEditableField(card, "Destination", targetType, (value) => {
+    delete transition.next;
+    delete transition.to;
+    delete transition.result;
+    if (value === "next") transition.next = workflow.data.steps[0].id;
+    else if (value === "to") {
+      if (!screens.length) {
+        transition.result = "No Screen is available in this project.";
+      } else transition.to = screens[0].id;
+    } else transition.result = "Describe the outcome.";
+    markWorkflowEdited(workflow);
+    renderWorkflowDiagram(workflow);
+    renderInspector();
+  }, { selectOptions: ["next", "to", "result"] });
+
+  if (targetType === "next") {
+    appendEditableField(card, "Next step", transition.next, (value) => {
+      transition.next = value;
+      markWorkflowEdited(workflow);
+      renderWorkflowDiagram(workflow);
+    }, { selectOptions: workflow.data.steps.map((entry) => entry.id) });
+  } else if (targetType === "to") {
+    appendEditableField(card, "Screen", transition.to, (value) => {
+      transition.to = value;
+      markWorkflowEdited(workflow);
+      renderWorkflowDiagram(workflow);
+    }, { selectOptions: screens.map((screen) => screen.id) });
+  } else {
+    appendEditableField(card, "Result (guidance)", transition.result, (value) => {
+      transition.result = value;
+      markWorkflowEdited(workflow);
+      renderWorkflowDiagram(workflow);
+    }, { multiline: true });
+  }
+  panel.append(card);
+}
+
+function addWorkflowStep(workflow) {
+  let index = workflow.data.steps.length + 1;
+  let id = `step-${index}`;
+  while (workflow.data.steps.some((step) => step.id === id)) {
+    index += 1;
+    id = `step-${index}`;
+  }
+  const step = {
+    id,
+    description: "Describe this step.",
+    transitions: [{ when: "Describe a condition", result: "Describe the outcome." }]
+  };
+  workflow.data.steps.push(step);
+  if (!workflow.data.entry) workflow.data.entry = id;
+  activeWorkflowStepId = id;
+  markWorkflowEdited(workflow);
+  renderWorkflowDiagram(workflow);
+  renderInspector();
+}
+
+function removeWorkflowStep(workflow, step) {
+  if (workflow.data.steps.length === 1) {
+    showWorkflowOutput("Cannot remove the final step", "A workflow must contain at least one step.");
+    return;
+  }
+  if (workflow.data.entry === step.id) {
+    showWorkflowOutput("Change the entry step first", "Select another step as the workflow entry before removing this one.");
+    return;
+  }
+  const referencedBy = workflow.data.steps.find((entry) =>
+    entry.transitions?.some((transition) => transition.next === step.id)
+  );
+  if (referencedBy) {
+    showWorkflowOutput("Step is still referenced", `Update the transition from "${referencedBy.id}" before removing this step.`);
+    return;
+  }
+  workflow.data.steps = workflow.data.steps.filter((entry) => entry !== step);
+  activeWorkflowStepId = workflow.data.entry;
+  markWorkflowEdited(workflow);
+  renderWorkflowDiagram(workflow);
+  renderInspector();
+}
+
+function markWorkflowEdited(workflow) {
+  clearTimeout(workflow.yamlTimer);
+  workflow.yamlParseVersion += 1;
+  workflow.yamlSourceMode = "data";
+  const version = ++workflow.yamlSerializeVersion;
+  const filePath = workflow.file;
+  try {
+    validateWorkflow(workflow.data, workflow.id);
+    invalidYamlFiles.delete(filePath);
+    setWorkflowYamlStatus(workflow, "Workflow is valid.");
+  } catch (error) {
+    invalidYamlFiles.set(filePath, error.message || String(error));
+    setWorkflowYamlStatus(workflow, error.message || String(error), true);
+  }
+  markEdited(filePath);
+  fetch("/api/yaml/stringify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data: workflow.data })
+  }).then(async (response) => {
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `YAML serialization failed (HTTP ${response.status}).`);
+    if (version !== workflow.yamlSerializeVersion || workflow.yamlSourceMode !== "data") return;
+    workflow.yamlSource = result.source;
+    if (viewingWorkflow && activeWorkflowId === workflow.id) {
+      byId("workflow-yaml-source").value = result.source;
+    }
+  }).catch((error) => {
+    if (version !== workflow.yamlSerializeVersion) return;
+    invalidYamlFiles.set(filePath, error.message || String(error));
+    setWorkflowYamlStatus(workflow, `Could not update YAML: ${error.message || String(error)}`, true);
+    updateSaveControls();
+  });
+}
+
+function editWorkflowYaml(workflow) {
+  const textarea = byId("workflow-yaml-source");
+  const source = textarea.value;
+  workflow.yamlSource = source;
+  workflow.yamlSourceMode = "source";
+  const version = ++workflow.yamlParseVersion;
+  invalidYamlFiles.set(workflow.file, "Validating workflow YAML...");
+  setWorkflowYamlStatus(workflow, "Validating workflow YAML...");
+  markEdited(workflow.file);
+  clearTimeout(workflow.yamlTimer);
+  workflow.yamlTimer = setTimeout(async () => {
+    try {
+      const response = await fetch("/api/yaml/parse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || `YAML parsing failed (HTTP ${response.status}).`);
+      if (version !== workflow.yamlParseVersion) return;
+      validateWorkflow(result.data, workflow.id);
+      workflow.data = result.data;
+      workflow.yamlSource = source;
+      invalidYamlFiles.delete(workflow.file);
+      setWorkflowYamlStatus(workflow, "Workflow YAML is valid.");
+      if (viewingWorkflow && activeWorkflowId === workflow.id) {
+        if (!workflow.data.steps.some((step) => step.id === activeWorkflowStepId)) {
+          activeWorkflowStepId = workflow.data.entry;
+        }
+        renderWorkflowDiagram(workflow);
+        renderInspector();
+      }
+      renderNavigation();
+      updateSaveControls();
+    } catch (error) {
+      if (version !== workflow.yamlParseVersion) return;
+      invalidYamlFiles.set(workflow.file, error.message || String(error));
+      setWorkflowYamlStatus(workflow, error.message || String(error), true);
+      updateSaveControls();
+    }
+  }, 250);
+}
+
+function setWorkflowYamlStatus(workflow, message, isError = false) {
+  workflow.yamlStatus = { message, isError };
+  if (!viewingWorkflow || activeWorkflowId !== workflow.id) return;
+  const status = byId("workflow-yaml-status");
+  status.textContent = message;
+  status.classList.toggle("error", isError);
+}
+
 async function renderAssetTemplate(assetId) {
   const template = assets.get(assetId);
   if (!template) return;
+  clearWorkflowDiagramResizeObserver();
   closeAssetContextMenu();
   updateScreenDomContext(null);
   clearTimeout(assetPreviewTimer);
   assetPreviewTimer = null;
   viewingTheme = false;
   viewingProject = false;
+  viewingWorkflow = false;
+  activeWorkflowId = null;
+  activeWorkflowStepId = null;
   activeAssetId = assetId;
   activeInstancePath = [];
   viewingAssetTemplate = true;
+  byId("main").classList.remove("workflow-editing");
+  byId("workflow-yaml-editor-panel").hidden = true;
+  byId("workflow-yaml-source").oninput = null;
   hideWorkflowOutput();
   updateNavigationSelection();
   byId("screen-heading").textContent = `${template.data.name || assetId} template`;
@@ -1619,7 +2416,8 @@ function selectInstance(path, assetId) {
 
 function updateNavigationSelection() {
   document.querySelectorAll(".screen-option").forEach((button) => {
-    const selected = Number(button.dataset.screenIndex) === activeScreenIndex && !viewingTheme && !viewingProject;
+    const selected = Number(button.dataset.screenIndex) === activeScreenIndex &&
+      !viewingTheme && !viewingProject && !viewingWorkflow && !viewingAssetTemplate;
     button.classList.toggle("selected", selected);
     if (selected) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
@@ -1633,6 +2431,12 @@ function updateNavigationSelection() {
         `Edit ${asset.data.name || asset.id} template; drag to add to ${screens[activeScreenIndex]?.data.name || "current Screen"}`
       );
     }
+  });
+  document.querySelectorAll(".workflow-option").forEach((button) => {
+    const selected = viewingWorkflow && button.dataset.workflowId === activeWorkflowId;
+    button.classList.toggle("selected", selected);
+    if (selected) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
   });
   const themeButton = byId("theme-nav");
   themeButton.classList.toggle("selected", viewingTheme);
@@ -1653,6 +2457,8 @@ function renderInspector() {
     renderProjectDetails(panel);
   } else if (viewingTheme) {
     renderThemeDetails(panel);
+  } else if (viewingWorkflow) {
+    renderWorkflowDetails(panel);
   } else if (viewingAssetTemplate) {
     renderTemplateDetails(panel, assets.get(activeAssetId));
   } else {
@@ -2103,6 +2909,8 @@ function getProjectFileData(filePath) {
   if (filePath === "project.yml") return project;
   const screen = screens.find((entry) => entry.file === filePath);
   if (screen) return screen.data;
+  const workflow = [...workflows.values()].find((entry) => entry.file === filePath);
+  if (workflow) return workflow.data;
   const asset = [...assets.values()].find((entry) => `${entry.directory}/asset.yml` === filePath);
   if (asset) return asset.data;
   if (project.theme === filePath) return theme;
@@ -2112,6 +2920,10 @@ function getProjectFileData(filePath) {
 function getProjectFileSaveEntry(filePath) {
   const assetHtml = [...assets.values()].find((entry) => entry.htmlFile === filePath);
   if (assetHtml) return { path: filePath, content: assetHtml.html };
+  const workflow = [...workflows.values()].find((entry) => entry.file === filePath);
+  if (workflow?.yamlSourceMode === "source") {
+    return { path: filePath, content: workflow.yamlSource };
+  }
   const assetYaml = [...assets.values()].find((entry) => `${entry.directory}/asset.yml` === filePath);
   if (assetYaml?.yamlSourceMode === "source") {
     return { path: filePath, content: assetYaml.yamlSource };
@@ -2226,16 +3038,23 @@ byId("save-project").addEventListener("click", () => saveProjectChanges());
 
 byId("theme-nav").addEventListener("click", () => {
   if (!theme) return;
+  clearWorkflowDiagramResizeObserver();
   clearTimeout(assetPreviewTimer);
   assetPreviewTimer = null;
   assetPreviewVersion += 1;
   byId("main").classList.remove("asset-editing");
+  byId("main").classList.remove("workflow-editing");
   byId("asset-html-editor-panel").hidden = true;
   byId("asset-html-source").oninput = null;
   byId("asset-yaml-editor-panel").hidden = true;
   byId("asset-yaml-source").oninput = null;
+  byId("workflow-yaml-editor-panel").hidden = true;
+  byId("workflow-yaml-source").oninput = null;
   viewingAssetTemplate = false;
   viewingProject = false;
+  viewingWorkflow = false;
+  activeWorkflowId = null;
+  activeWorkflowStepId = null;
   activeAssetId = null;
   activeInstancePath = [];
   viewingTheme = true;
@@ -2331,12 +3150,24 @@ async function runAction(action) {
   }
   const output = byId("workflow-output");
   output.replaceChildren();
-  output.append(element("strong", "", `Preview: ${workflow.name || action.workflow}`));
-  output.append(element("div", "", workflow.description || "Workflow preview"));
-  for (const step of workflow.steps || []) {
-    output.append(element("div", "", `${step.name || "Step"}: ${step.message || ""}`));
+  output.append(element("strong", "", `Preview: ${workflow.data.name || action.workflow}`));
+  output.append(element("div", "", workflow.data.description || "Workflow graph preview"));
+  for (const step of workflow.data.steps) {
+    output.append(element("div", "", `${step.id}: ${step.description || "No step description."}`));
+    for (const transition of step.transitions) {
+      const destination = transition.next
+        ? `next: ${transition.next}`
+        : transition.to
+          ? `Screen: ${transition.to}`
+          : `result: ${transition.result}`;
+      output.append(element("div", "", `When ${transition.when} → ${destination}`));
+    }
   }
-  output.append(element("div", "", "No backend action was performed and no project files were changed."));
+  output.append(element(
+    "div",
+    "",
+    `Entry step: ${workflow.data.entry}. This preview describes the flow; no steps, backend actions, or navigation were executed.`
+  ));
   output.classList.add("visible");
 }
 
