@@ -23,3 +23,20 @@ test("keeps quoted empty flow values as strings", () => {
     "sequence-text": "[]"
   });
 });
+
+test("parses light and dark theme color modes", () => {
+  assert.deepEqual(parseOpenuxYaml([
+    "modes:",
+    "  light:",
+    "    colors:",
+    '      background: "#ffffff"',
+    "  dark:",
+    "    colors:",
+    '      background: "#101827"'
+  ].join("\n")), {
+    modes: {
+      light: { colors: { background: "#ffffff" } },
+      dark: { colors: { background: "#101827" } }
+    }
+  });
+});

@@ -7,6 +7,8 @@ const booleanHtmlAttributes = new Set([
 ]);
 const attributeTypes = ["string", "boolean", "list", "number"];
 const numberFormats = ["integer", "decimal", "currency", "percentage"];
+const themeModeNames = ["light", "dark"];
+const systemThemeQuery = window.matchMedia?.("(prefers-color-scheme: dark)");
 const assetDragType = "application/x-openux-asset-template";
 const assetInstanceDragType = "application/x-openux-asset-instance";
 const byId = (id) => document.getElementById(id);
@@ -18,15 +20,22 @@ let workflows = new Map();
 let theme;
 let themeStylesheet = "";
 let themeStylesheetBase = appRoot;
+let themeModePreference = "system";
+let systemThemeMode = systemThemeQuery?.matches ? "dark" : "light";
+let appliedThemeTokens = new Set();
 let activeScreenIndex = 0;
 let activeAssetId = null;
 let activeInstancePath = [];
 let viewingAssetTemplate = false;
 let viewingTheme = false;
+let viewingProject = false;
 let assetEditorRestoreId = null;
 let paletteAssetDropHandled = false;
 let reviewedInSession = false;
 let hasEdits = false;
+let assetContextMenuTarget = null;
+let pendingAssetDeletion = null;
+let deleteDialogReturnFocus = null;
 const dirtyFiles = new Map();
 const invalidYamlFiles = new Map();
 const createdScreenFiles = new Set();
@@ -164,6 +173,71 @@ function validateAssetSlotMarkup(template, markup, source) {
   }
 }
 
+function validateTheme(data, source) {
+  const validateColors = (colors, location) => {
+    if (colors === undefined) return;
+    if (!colors || Array.isArray(colors) || typeof colors !== "object") {
+      throw new Error(`${location} colors must be a mapping.`);
+    }
+    for (const [name, value] of Object.entries(colors)) {
+      if (typeof value !== "string") {
+        throw new Error(`${location} color "${name}" must be a string.`);
+      }
+    }
+  };
+
+  validateColors(data.colors, source);
+  if (data.modes === undefined) return;
+  if (!data.modes || Array.isArray(data.modes) || typeof data.modes !== "object") {
+    throw new Error(`${source} modes must be a mapping.`);
+  }
+  for (const [mode, variant] of Object.entries(data.modes)) {
+    if (!themeModeNames.includes(mode)) {
+      throw new Error(`${source} defines unsupported theme mode "${mode}".`);
+    }
+    if (!variant || Array.isArray(variant) || typeof variant !== "object") {
+      throw new Error(`${source} ${mode} mode must be a mapping.`);
+    }
+    validateColors(variant.colors, `${source} ${mode} mode`);
+  }
+}
+
+function getDefinedThemeModes() {
+  const modes = theme?.modes;
+  const definedModes = themeModeNames.filter((mode) =>
+    modes && Object.hasOwn(modes, mode)
+  );
+  if (definedModes.length) return definedModes;
+  return theme && Object.hasOwn(theme, "colors") ? ["light"] : [];
+}
+
+function getActiveThemeMode() {
+  const modes = getDefinedThemeModes();
+  const requestedMode = themeModePreference === "system" ? systemThemeMode : themeModePreference;
+  return modes.includes(requestedMode) ? requestedMode : modes[0] || requestedMode;
+}
+
+function getThemeColors(mode = getActiveThemeMode()) {
+  const modes = getDefinedThemeModes();
+  const activeMode = modes.includes(mode) ? mode : modes[0];
+  if (!activeMode) return {};
+  if (!theme?.modes || !Object.hasOwn(theme.modes, activeMode)) return theme?.colors || {};
+
+  const fallbackMode = activeMode === "light" ? "dark" : "light";
+  return {
+    ...(theme.modes[fallbackMode]?.colors || {}),
+    ...(theme.modes[activeMode]?.colors || {})
+  };
+}
+
+function themeModeLabel(mode) {
+  return mode.charAt(0).toUpperCase() + mode.slice(1);
+}
+
+function currentThemeLabel() {
+  return `Theme: ${theme?.name || "Theme"} · ${themeModeLabel(getActiveThemeMode())}`;
+}
+
 function isValidAttributeValue(definition, value) {
   if (definition.type === "string") return typeof value === "string";
   if (definition.type === "boolean") return typeof value === "boolean";
@@ -230,6 +304,7 @@ async function loadProject() {
       })),
       (async () => {
         const data = await loadYaml(project.theme);
+        validateTheme(data, project.theme);
         const themeDirectory = project.theme.includes("/")
           ? project.theme.slice(0, project.theme.lastIndexOf("/") + 1)
           : "";
@@ -260,10 +335,12 @@ async function loadProject() {
     themeStylesheet = loadedTheme.stylesheet;
     themeStylesheetBase = loadedTheme.stylesheetBase;
     viewingTheme = false;
+    viewingProject = false;
     hasEdits = false;
     dirtyFiles.clear();
     invalidYamlFiles.clear();
     byId("create-screen").disabled = false;
+    byId("project-nav").disabled = false;
     updateSaveControls("All changes saved");
     reviewedInSession = false;
     applyTheme();
@@ -276,28 +353,22 @@ async function loadProject() {
 }
 
 function applyTheme() {
-  const colors = theme.colors || {};
+  const colors = getThemeColors();
+  const colorNames = new Set(Object.keys(colors));
+  for (const name of appliedThemeTokens) {
+    if (!colorNames.has(name)) document.documentElement.style.removeProperty(`--theme-${name}`);
+  }
   for (const [name, value] of Object.entries(colors)) {
     document.documentElement.style.setProperty(`--theme-${name}`, value);
   }
-  if (colors.primary) {
-    document.documentElement.style.setProperty("--blue", colors.primary);
-  }
-  if (colors.ink) {
-    document.documentElement.style.setProperty("--ink", colors.ink);
-  }
-  if (colors.background) {
-    document.documentElement.style.setProperty("--canvas", colors.background);
-  }
-  if (colors.panel) {
-    document.documentElement.style.setProperty("--panel", colors.panel);
-  }
+  appliedThemeTokens = colorNames;
+  byId("screen-preview").style.colorScheme = getActiveThemeMode();
   byId("theme-name").textContent = theme.name || "Theme";
-  byId("theme-chip").textContent = `Theme: ${theme.name || "Theme"}`;
+  byId("theme-chip").textContent = currentThemeLabel();
 }
 
 function renderNavigation() {
-  if (!viewingAssetTemplate && !viewingTheme) {
+  if (!viewingAssetTemplate && !viewingTheme && !viewingProject) {
     byId("breadcrumb").textContent = "Screens";
   }
   const screenNav = byId("screen-nav");
@@ -714,6 +785,7 @@ function showAddAssetError(error) {
 async function renderScreen(index) {
   const selected = screens[index];
   if (!selected) return;
+  closeAssetContextMenu();
   clearTimeout(assetPreviewTimer);
   assetPreviewTimer = null;
   assetPreviewVersion += 1;
@@ -725,14 +797,16 @@ async function renderScreen(index) {
   activeScreenIndex = index;
   viewingAssetTemplate = false;
   viewingTheme = false;
+  viewingProject = false;
   activeAssetId = null;
   activeInstancePath = [];
   hideWorkflowOutput();
   updateNavigationSelection();
   updateScreenDomContext(selected);
+  byId("screen-stage").setAttribute("aria-label", "Rendered Screen preview; drop an asset here to add it");
   byId("screen-heading").textContent = selected.data.name || selected.id;
   byId("breadcrumb").textContent = "Screens";
-  byId("theme-chip").textContent = `Theme: ${theme.name || "Theme"}`;
+  byId("theme-chip").textContent = currentThemeLabel();
 
   const preview = byId("screen-preview");
   preview.className = "screen-preview";
@@ -769,19 +843,130 @@ async function renderScreen(index) {
   }
 }
 
+function renderProjectOverview() {
+  if (!project) return;
+  closeAssetContextMenu();
+  clearTimeout(assetPreviewTimer);
+  assetPreviewTimer = null;
+  assetPreviewVersion += 1;
+  byId("main").classList.remove("asset-editing");
+  byId("asset-html-editor-panel").hidden = true;
+  byId("asset-html-source").oninput = null;
+  byId("asset-yaml-editor-panel").hidden = true;
+  byId("asset-yaml-source").oninput = null;
+  viewingAssetTemplate = false;
+  viewingTheme = false;
+  viewingProject = true;
+  activeAssetId = null;
+  activeInstancePath = [];
+  hideWorkflowOutput();
+  updateNavigationSelection();
+  updateScreenDomContext(null);
+  byId("screen-stage").setAttribute("aria-label", "Project overview");
+  byId("screen-heading").textContent = "Overview";
+  byId("breadcrumb").textContent = "Project";
+  const preview = byId("screen-preview");
+  preview.className = "screen-preview project-overview-preview";
+  preview.setAttribute("aria-label", "Project overview");
+  preview.replaceChildren();
+
+  const content = element("div", "project-overview-content");
+  const hero = element("section", "project-overview-hero");
+  hero.append(
+    element("div", "project-overview-eyebrow", "PROJECT OVERVIEW"),
+    element("h2", "project-overview-title", project.name || "Untitled project"),
+    element("p", "project-overview-description", project.description || "No project description has been provided.")
+  );
+  content.append(hero);
+
+  const stats = element("div", "project-overview-stats");
+  for (const [label, value] of [
+    ["Screens", screens.length],
+    ["Asset templates", assets.size],
+    ["Workflows", workflows.size]
+  ]) {
+    const stat = element("div", "project-overview-stat");
+    stat.append(element("span", "project-overview-stat-label", label));
+    stat.append(element("strong", "project-overview-stat-value", String(value)));
+    stats.append(stat);
+  }
+  content.append(stats);
+
+  const sections = element("div", "project-overview-sections");
+  const screenSection = element("section", "project-overview-panel");
+  screenSection.append(element("h3", "project-overview-section-title", "Screens"));
+  if (screens.length) {
+    const screenList = element("div", "project-overview-screen-list");
+    screens.forEach((screen, index) => {
+      const name = screen.data.name || screen.id;
+      const screenButton = element("button", "project-overview-screen");
+      screenButton.type = "button";
+      screenButton.setAttribute("aria-label", `Open Screen ${name}`);
+      screenButton.append(element("span", "project-overview-screen-name", name));
+      screenButton.append(element("span", "project-overview-screen-id", screen.id));
+      screenButton.append(element(
+        "span",
+        "project-overview-screen-description",
+        screen.data.description || "No description provided."
+      ));
+      screenButton.addEventListener("click", () => renderScreen(index));
+      screenList.append(screenButton);
+    });
+    screenSection.append(screenList);
+  } else {
+    screenSection.append(element("p", "project-overview-empty", "No Screens are defined in this project."));
+  }
+  sections.append(screenSection);
+
+  const configuration = element("section", "project-overview-panel");
+  configuration.append(element("h3", "project-overview-section-title", "Project configuration"));
+  configuration.append(element("div", "project-overview-config-label", "Theme"));
+  configuration.append(element("div", "project-overview-config-value", theme?.name || "Not configured"));
+  configuration.append(element("div", "project-overview-config-label", "Workflows"));
+  const workflowList = element("div", "project-overview-workflow-list");
+  if (workflows.size) {
+    for (const [id, workflow] of workflows) {
+      const workflowItem = element("div", "project-overview-workflow");
+      workflowItem.append(
+        element("span", "project-overview-workflow-name", workflow.name || id),
+        element("span", "project-overview-workflow-id", id)
+      );
+      workflowList.append(workflowItem);
+    }
+  } else {
+    workflowList.append(element("span", "project-overview-workflow-id", "No workflows defined."));
+  }
+  configuration.append(workflowList);
+  configuration.append(element("div", "project-overview-config-label", "Project manifest"));
+  configuration.append(element("div", "project-overview-config-value", "openux/project.yml"));
+  configuration.append(element("div", "project-overview-config-label", "Source of truth"));
+  configuration.append(element(
+    "p",
+    "project-overview-config-note",
+    "OpenUX project files define the Screens, assets, Theme, and Workflows used by this Studio."
+  ));
+  sections.append(configuration);
+  content.append(sections);
+  preview.append(content);
+  renderInspector();
+}
+
 async function renderAssetTemplate(assetId) {
   const template = assets.get(assetId);
   if (!template) return;
+  closeAssetContextMenu();
   updateScreenDomContext(null);
   clearTimeout(assetPreviewTimer);
   assetPreviewTimer = null;
   viewingTheme = false;
+  viewingProject = false;
   activeAssetId = assetId;
   activeInstancePath = [];
   viewingAssetTemplate = true;
   hideWorkflowOutput();
   updateNavigationSelection();
   byId("screen-heading").textContent = `${template.data.name || assetId} template`;
+  byId("screen-stage").setAttribute("aria-label", `${template.data.name || assetId} template preview`);
   byId("breadcrumb").textContent = "Asset templates";
   byId("main").classList.add("asset-editing");
   byId("asset-html-editor-panel").hidden = false;
@@ -990,6 +1175,13 @@ async function renderInstance(instance, template, instancePath, screenId = "", s
       const clickedInstance = getEventInstance(event);
       if (clickedInstance === host) selectInstance(instancePath, template.id);
     });
+    host.addEventListener("contextmenu", (event) => {
+      if (!screenId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      selectInstance(instancePath, template.id);
+      openAssetContextMenu(event, host, instancePath, template.id);
+    });
     host.addEventListener("focus", (event) => {
       if (getEventInstance(event) === host) selectInstance(instancePath, template.id);
     });
@@ -1017,6 +1209,121 @@ function getEventInstance(event) {
   return event.composedPath().find((node) =>
     node instanceof HTMLElement && node.classList.contains("asset-instance")
   );
+}
+
+function openAssetContextMenu(event, host, instancePath, assetId) {
+  const menu = byId("asset-context-menu");
+  assetContextMenuTarget = {
+    screenIndex: activeScreenIndex,
+    instancePath: [...instancePath],
+    assetId,
+    host
+  };
+  const deleteButton = byId("asset-context-delete");
+  deleteButton.disabled = false;
+  deleteButton.title = instancePath.length === 1
+    ? "A Screen's root layout cannot be deleted."
+    : "";
+  menu.hidden = false;
+
+  const bounds = menu.getBoundingClientRect();
+  const hostBounds = host.getBoundingClientRect();
+  const keyboardPosition = event.clientX === 0 && event.clientY === 0;
+  const x = keyboardPosition ? hostBounds.left : event.clientX;
+  const y = keyboardPosition ? hostBounds.bottom : event.clientY;
+  menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - bounds.width - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - bounds.height - 8))}px`;
+  menu.querySelector("button:not(:disabled)")?.focus({ preventScroll: true });
+}
+
+function closeAssetContextMenu(restoreFocus = false) {
+  const menu = byId("asset-context-menu");
+  if (!menu || menu.hidden) {
+    assetContextMenuTarget = null;
+    return;
+  }
+  const target = assetContextMenuTarget;
+  menu.hidden = true;
+  assetContextMenuTarget = null;
+  if (restoreFocus && target?.screenIndex === activeScreenIndex) target.host.focus();
+}
+
+function resolveAssetContextTarget(target) {
+  if (!target || target.screenIndex !== activeScreenIndex) {
+    throw new Error("The selected asset is no longer available on this Screen.");
+  }
+  const screen = screens[target.screenIndex];
+  const instance = screen && getInstanceAtPath(screen, target.instancePath);
+  const template = instance && assets.get(instance["asset-template"]);
+  if (!screen || !instance || !template) {
+    throw new Error("The selected asset is no longer available.");
+  }
+  return { screen, instance, template };
+}
+
+async function copyAssetDetails(target) {
+  try {
+    const { screen, instance, template } = resolveAssetContextTarget(target);
+    if (!navigator.clipboard?.writeText) {
+      throw new Error("Clipboard access is unavailable in this browser.");
+    }
+    const details = {
+      screen: {
+        id: screen.id,
+        name: screen.data.name || screen.id
+      },
+      selectedAsset: {
+        instancePath: target.instancePath,
+        template: {
+          id: template.id,
+          name: template.data.name || template.id,
+          description: template.data.description || "",
+          category: template.data.category || "",
+          attributes: template.data.attributes || {},
+          slots: template.data.slots || []
+        },
+        instance
+      }
+    };
+    const clipboardText = `OpenUX asset details:\n\`\`\`json\n${JSON.stringify(details, null, 2)}\n\`\`\``;
+    await navigator.clipboard.writeText(clipboardText);
+    showWorkflowOutput("Asset details copied", "Paste the OpenUX context into your prompt.");
+  } catch (error) {
+    showWorkflowOutput("Could not copy asset details", error.message || String(error));
+  }
+}
+
+function confirmDeleteAsset(target) {
+  try {
+    const { screen, instance, template } = resolveAssetContextTarget(target);
+    if (target.instancePath.length === 1) {
+      showWorkflowOutput("Cannot delete root layout", "A Screen must keep its root layout. Delete or move its content assets instead.");
+      return;
+    }
+    const instanceName = instance.name || template.data.name || template.id;
+    const screenName = screen.data.name || screen.id;
+    const hasNestedAssets = Object.values(instance.slots || {}).some(
+      (children) => Array.isArray(children) && children.length > 0
+    );
+    const nestedWarning = hasNestedAssets ? " Assets inside its slots will also be deleted." : "";
+    pendingAssetDeletion = { ...target, instancePath: [...target.instancePath] };
+    deleteDialogReturnFocus = document.activeElement;
+    byId("asset-delete-message").textContent =
+      `Delete "${instanceName}" from the "${screenName}" Screen?${nestedWarning}`;
+    byId("asset-delete-dialog").showModal();
+    byId("asset-delete-cancel").focus();
+  } catch (error) {
+    showWorkflowOutput("Could not delete asset", error.message || String(error));
+  }
+}
+
+function closeAssetDeleteDialog(restoreFocus = false) {
+  const dialog = byId("asset-delete-dialog");
+  if (dialog.open) dialog.close();
+  const returnFocus = deleteDialogReturnFocus;
+  pendingAssetDeletion = null;
+  deleteDialogReturnFocus = null;
+  if (restoreFocus && returnFocus?.isConnected) returnFocus.focus();
 }
 
 function sameInstancePath(left, right) {
@@ -1302,6 +1609,7 @@ function selectInstance(path, assetId) {
   activeInstancePath = path;
   viewingAssetTemplate = false;
   viewingTheme = false;
+  viewingProject = false;
   findAssetInstances(byId("screen-preview")).forEach((node) => {
     node.classList.toggle("selected", node.dataset.instancePath === JSON.stringify(path));
   });
@@ -1311,7 +1619,7 @@ function selectInstance(path, assetId) {
 
 function updateNavigationSelection() {
   document.querySelectorAll(".screen-option").forEach((button) => {
-    const selected = Number(button.dataset.screenIndex) === activeScreenIndex && !viewingTheme;
+    const selected = Number(button.dataset.screenIndex) === activeScreenIndex && !viewingTheme && !viewingProject;
     button.classList.toggle("selected", selected);
     if (selected) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
@@ -1330,13 +1638,20 @@ function updateNavigationSelection() {
   themeButton.classList.toggle("selected", viewingTheme);
   if (viewingTheme) themeButton.setAttribute("aria-current", "page");
   else themeButton.removeAttribute("aria-current");
+  const projectButton = byId("project-nav");
+  projectButton.classList.toggle("selected", viewingProject);
+  if (viewingProject) projectButton.setAttribute("aria-current", "page");
+  else projectButton.removeAttribute("aria-current");
+  byId("review-card").hidden = viewingProject;
 }
 
 function renderInspector() {
   const panel = byId("inspector-content");
   panel.replaceChildren(element("h2", "panel-heading", "Details"));
 
-  if (viewingTheme) {
+  if (viewingProject) {
+    renderProjectDetails(panel);
+  } else if (viewingTheme) {
     renderThemeDetails(panel);
   } else if (viewingAssetTemplate) {
     renderTemplateDetails(panel, assets.get(activeAssetId));
@@ -1352,6 +1667,17 @@ function renderInspector() {
       renderReviewControls(panel);
     }
   }
+}
+
+function renderProjectDetails(panel) {
+  appendSection(panel, "Project");
+  appendDetail(panel, "Name", project.name || "Untitled project");
+  appendDetail(panel, "Description", project.description || "No project description has been provided.");
+  appendDetail(panel, "Screens", screens.length);
+  appendDetail(panel, "Asset templates", assets.size);
+  appendDetail(panel, "Theme", theme?.name || "Not configured");
+  appendDetail(panel, "Workflows", workflows.size);
+  appendDetail(panel, "Project manifest", "openux/project.yml");
 }
 
 function renderScreenDetails(panel, screen) {
@@ -1379,19 +1705,105 @@ function renderThemeDetails(panel) {
   appendSection(panel, "Theme");
   appendEditableField(panel, "Name", theme.name || "Theme", (value) => {
     theme.name = value;
-    byId("theme-name").textContent = value || "Theme";
-    byId("theme-chip").textContent = `Theme: ${value || "Theme"}`;
+    applyTheme();
     if (viewingTheme) byId("screen-heading").textContent = value || "Theme";
     markEdited(project.theme);
   });
-  const colors = theme.colors || {};
+  const definedModes = getDefinedThemeModes();
+  appendSection(panel, "Appearance");
+  const modeControls = element("div", "theme-mode-controls");
+  const systemButton = element("button", "theme-mode-button", "System");
+  systemButton.type = "button";
+  systemButton.setAttribute("aria-pressed", String(themeModePreference === "system"));
+  systemButton.addEventListener("click", () => {
+    themeModePreference = "system";
+    applyTheme();
+    renderInspector();
+  });
+  modeControls.append(systemButton);
+  for (const mode of themeModeNames) {
+    if (definedModes.includes(mode)) {
+      const button = element("button", "theme-mode-button", themeModeLabel(mode));
+      button.type = "button";
+      button.setAttribute("aria-pressed", String(themeModePreference === mode));
+      button.addEventListener("click", () => {
+        themeModePreference = mode;
+        applyTheme();
+        renderInspector();
+      });
+      modeControls.append(button);
+    } else {
+      const button = element("button", "theme-mode-button theme-mode-add", `Add ${themeModeLabel(mode)}`);
+      button.type = "button";
+      button.addEventListener("click", () => addThemeMode(mode));
+      modeControls.append(button);
+    }
+  }
+  panel.append(modeControls);
+  const activeMode = getActiveThemeMode();
+  if (themeModePreference === "system" && definedModes.length &&
+      !definedModes.includes(systemThemeMode)) {
+    panel.append(element(
+      "div",
+      "theme-mode-note",
+      `System prefers ${themeModeLabel(systemThemeMode)}, but only ${themeModeLabel(activeMode)} is defined; using ${themeModeLabel(activeMode)}.`
+    ));
+  } else if (themeModePreference === "system") {
+    panel.append(element(
+      "div",
+      "theme-mode-note",
+      `Using ${themeModeLabel(activeMode)} based on the system color scheme.`
+    ));
+  } else if (definedModes.length === 1) {
+    panel.append(element(
+      "div",
+      "theme-mode-note",
+      `Only ${themeModeLabel(activeMode)} is defined; it is used when either appearance is requested.`
+    ));
+  } else {
+    panel.append(element(
+      "div",
+      "theme-mode-note",
+      `Showing ${themeModeLabel(activeMode)} in the Screen preview.`
+    ));
+  }
+
+  const mode = activeMode;
+  appendSection(panel, `${themeModeLabel(mode)} colors`);
+  const colors = getThemeColors(mode);
   for (const [name, value] of Object.entries(colors)) {
     appendEditableField(panel, name, value, (updated) => {
-      theme.colors[name] = updated;
+      if (theme.modes?.[mode]) {
+        theme.modes[mode].colors ||= {};
+        theme.modes[mode].colors[name] = updated;
+      } else {
+        theme.colors[name] = updated;
+      }
       applyTheme();
       markEdited(project.theme);
     }, { color: true });
   }
+  if (!Object.keys(colors).length) {
+    panel.append(element("div", "theme-mode-note", "No color tokens are defined for this appearance."));
+  }
+}
+
+function addThemeMode(mode) {
+  const sourceColors = { ...getThemeColors() };
+  theme.modes ||= {};
+  if (Object.hasOwn(theme, "colors")) {
+    const lightMode = theme.modes.light || {};
+    theme.modes.light = {
+      ...lightMode,
+      colors: { ...theme.colors, ...(lightMode.colors || {}) }
+    };
+    delete theme.colors;
+  }
+  theme.modes[mode] = { colors: sourceColors };
+  themeModePreference = mode;
+  applyTheme();
+  markEdited(project.theme);
+  renderInspector();
 }
 
 function renderReviewControls(panel) {
@@ -1462,9 +1874,14 @@ function renderInstanceDetails(panel, instance, template) {
   }
   const deleteButton = element("button", "delete-instance-button", "Delete asset instance");
   deleteButton.type = "button";
-  deleteButton.addEventListener("click", () =>
-    deleteAssetInstance([...activeInstancePath]).catch(showAddAssetError)
-  );
+  deleteButton.title = activeInstancePath.length === 1
+    ? "A Screen's root layout cannot be deleted."
+    : "";
+  deleteButton.addEventListener("click", () => confirmDeleteAsset({
+    screenIndex: activeScreenIndex,
+    instancePath: [...activeInstancePath],
+    assetId: template.id
+  }));
   panel.append(deleteButton);
 }
 
@@ -1804,6 +2221,7 @@ byId("reset-project").addEventListener("click", async () => {
 byId("create-screen").addEventListener("click", () =>
   createScreen().catch((error) => showWorkflowOutput("Could not create Screen", error.message || String(error)))
 );
+byId("project-nav").addEventListener("click", renderProjectOverview);
 byId("save-project").addEventListener("click", () => saveProjectChanges());
 
 byId("theme-nav").addEventListener("click", () => {
@@ -1816,6 +2234,10 @@ byId("theme-nav").addEventListener("click", () => {
   byId("asset-html-source").oninput = null;
   byId("asset-yaml-editor-panel").hidden = true;
   byId("asset-yaml-source").oninput = null;
+  viewingAssetTemplate = false;
+  viewingProject = false;
+  activeAssetId = null;
+  activeInstancePath = [];
   viewingTheme = true;
   byId("breadcrumb").textContent = "Project theme";
   byId("screen-heading").textContent = theme.name || "Theme";
@@ -1823,6 +2245,69 @@ byId("theme-nav").addEventListener("click", () => {
   updateNavigationSelection();
   renderInspector();
 });
+
+byId("asset-context-edit-template").addEventListener("click", () => {
+  const target = assetContextMenuTarget;
+  closeAssetContextMenu();
+  if (!target || target.screenIndex !== activeScreenIndex) return;
+  renderAssetTemplate(target.assetId).catch(showFatalError);
+});
+byId("asset-context-copy-details").addEventListener("click", () => {
+  const target = assetContextMenuTarget;
+  closeAssetContextMenu();
+  if (target) copyAssetDetails(target);
+});
+byId("asset-context-delete").addEventListener("click", () => {
+  const target = assetContextMenuTarget;
+  closeAssetContextMenu(true);
+  if (target) confirmDeleteAsset(target);
+});
+byId("asset-delete-cancel").addEventListener("click", () => closeAssetDeleteDialog(true));
+byId("asset-delete-dialog").addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeAssetDeleteDialog(true);
+});
+byId("asset-delete-confirm").addEventListener("click", () => {
+  const target = pendingAssetDeletion;
+  closeAssetDeleteDialog(false);
+  if (!target) return;
+  deleteAssetInstance([...target.instancePath]).catch((error) =>
+    showWorkflowOutput("Could not delete asset", error.message || String(error))
+  );
+});
+
+const assetContextMenu = byId("asset-context-menu");
+document.addEventListener("pointerdown", (event) => {
+  if (!assetContextMenu.hidden && !assetContextMenu.contains(event.target)) {
+    closeAssetContextMenu();
+  }
+}, true);
+document.addEventListener("keydown", (event) => {
+  if (assetContextMenu.hidden) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeAssetContextMenu(true);
+    return;
+  }
+  if (event.key === "Tab") {
+    closeAssetContextMenu(true);
+    return;
+  }
+  const items = [...assetContextMenu.querySelectorAll("button:not(:disabled)")];
+  if (!items.length) return;
+  const currentIndex = items.indexOf(document.activeElement);
+  let nextIndex = null;
+  if (event.key === "ArrowDown") nextIndex = (currentIndex + 1) % items.length;
+  else if (event.key === "ArrowUp") nextIndex = (currentIndex - 1 + items.length) % items.length;
+  else if (event.key === "Home") nextIndex = 0;
+  else if (event.key === "End") nextIndex = items.length - 1;
+  if (nextIndex !== null) {
+    event.preventDefault();
+    items[nextIndex].focus();
+  }
+});
+window.addEventListener("resize", () => closeAssetContextMenu());
+window.addEventListener("scroll", () => closeAssetContextMenu(), true);
 
 async function runAction(action) {
   for (const host of findAssetInstances(byId("screen-preview"))) {
@@ -1881,6 +2366,19 @@ function showFatalError(error) {
     element("div", "error-message", error.message || String(error)),
     element("div", "readonly-label", "Serve the repository root over HTTP so the editor can fetch the openux/ example project.")
   );
+}
+
+function handleSystemThemeChange(event) {
+  systemThemeMode = event.matches ? "dark" : "light";
+  if (!theme || themeModePreference !== "system") return;
+  applyTheme();
+  if (viewingTheme) renderInspector();
+}
+
+if (typeof systemThemeQuery?.addEventListener === "function") {
+  systemThemeQuery.addEventListener("change", handleSystemThemeChange);
+} else {
+  systemThemeQuery?.addListener?.(handleSystemThemeChange);
 }
 
 loadProject();

@@ -1,7 +1,7 @@
 <style>
   .openux-activity-card {
     overflow: hidden;
-    border: 1px solid #e7ebf2;
+    border: 1px solid var(--theme-border, #e7ebf2);
     border-radius: 12px;
     background: var(--theme-surface, #fff);
     box-shadow: 0 2px 7px rgb(28 45 80 / 3%);
@@ -11,17 +11,17 @@
     align-items: center;
     justify-content: space-between;
     padding: 17px 18px 13px;
-    border-bottom: 1px solid #eef1f5;
+    border-bottom: 1px solid var(--theme-border-muted, #eef1f5);
   }
-  .openux-activity-title { margin: 0; color: #253149; font-size: 13px; font-weight: 700; }
-  .openux-activity-link { color: #4569d8; font-size: 10px; font-weight: 650; }
+  .openux-activity-title { margin: 0; color: var(--theme-ink, #253149); font-size: 13px; font-weight: 700; }
+  .openux-activity-link { color: var(--theme-primary, #4569d8); font-size: 10px; font-weight: 650; }
   .openux-activity-row {
     display: grid;
     grid-template-columns: 34px minmax(0, 1fr) auto;
     align-items: center;
     gap: 11px;
     padding: 12px 18px;
-    border-bottom: 1px solid #f0f2f6;
+    border-bottom: 1px solid var(--theme-border-muted, #f0f2f6);
   }
   .openux-activity-row:last-child { border-bottom: 0; }
   .openux-activity-icon {
@@ -30,14 +30,14 @@
     height: 32px;
     place-items: center;
     border-radius: 9px;
-    color: #5269bb;
-    background: #eef2ff;
+    color: var(--theme-primary, #5269bb);
+    background: color-mix(in srgb, var(--theme-primary, #4569e8) 13%, var(--theme-surface, #fff));
     font-size: 13px;
   }
-  .openux-activity-merchant { margin: 0 0 2px; color: #303c52; font-size: 11px; font-weight: 650; }
-  .openux-activity-meta { margin: 0; color: #8a95a7; font-size: 9px; }
-  .openux-activity-amount { color: #303c52; font-size: 11px; font-weight: 700; white-space: nowrap; }
-  .openux-activity-amount--credit { color: #168568; }
+  .openux-activity-merchant { margin: 0 0 2px; color: var(--theme-ink, #303c52); font-size: 11px; font-weight: 650; }
+  .openux-activity-meta { margin: 0; color: var(--theme-muted, #8a95a7); font-size: 9px; }
+  .openux-activity-amount { color: var(--theme-ink, #303c52); font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .openux-activity-amount--credit { color: var(--theme-success, var(--theme-primary, #168568)); }
 </style>
 <section class="openux-activity-card" aria-label="Recent transactions">
   <div class="openux-activity-heading"><h2 class="openux-activity-title">Recent activity</h2><span class="openux-activity-link">View all</span></div>

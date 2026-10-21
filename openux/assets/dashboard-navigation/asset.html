@@ -2,7 +2,7 @@
   .openux-dash-nav { display: grid; gap: 5px; }
   .openux-dash-nav-label {
     margin: 10px 10px 7px;
-    color: #98a2b3;
+    color: var(--theme-muted, #98a2b3);
     font-size: 10px;
     font-weight: 750;
     letter-spacing: .09em;
@@ -15,13 +15,13 @@
     min-height: 39px;
     padding: 0 11px;
     border-radius: 8px;
-    color: #69768c;
+    color: var(--theme-muted, #69768c);
     font-size: 12px;
     font-weight: 600;
   }
   .openux-dash-nav-item--active {
-    color: #3556cf;
-    background: #eef2ff;
+    color: var(--theme-primary, #3556cf);
+    background: color-mix(in srgb, var(--theme-primary, #4569e8) 13%, var(--theme-surface, #fff));
     font-weight: 700;
   }
   .openux-dash-nav-icon { width: 18px; text-align: center; font-size: 14px; }
@@ -29,8 +29,8 @@
     margin-left: auto;
     padding: 2px 6px;
     border-radius: 99px;
-    color: #5e6e89;
-    background: #edf1f7;
+    color: var(--theme-muted, #5e6e89);
+    background: var(--theme-surface-muted, #edf1f7);
     font-size: 10px;
   }
   @media (max-width: 760px) {

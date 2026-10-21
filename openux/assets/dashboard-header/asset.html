@@ -15,7 +15,7 @@
     height: 34px;
     place-items: center;
     border-radius: 10px;
-    color: white;
+    color: var(--theme-on-primary, #fff);
     background: var(--theme-primary, #4569e8);
     font-size: 15px;
   }
@@ -26,8 +26,8 @@
     padding: 9px 13px;
     border: 1px solid var(--theme-border, #e1e7ef);
     border-radius: 8px;
-    color: #8a95a7;
-    background: #f8f9fc;
+    color: var(--theme-muted, #8a95a7);
+    background: var(--theme-surface-muted, #f8f9fc);
     font-size: 12px;
   }
   .openux-dashboard-profile {
@@ -51,8 +51,8 @@
     height: 34px;
     place-items: center;
     border-radius: 50%;
-    color: #3752b5;
-    background: #e8edff;
+    color: var(--theme-primary, #3752b5);
+    background: color-mix(in srgb, var(--theme-primary, #4569e8) 14%, var(--theme-surface, #fff));
     font-weight: 750;
   }
   @media (max-width: 520px) {

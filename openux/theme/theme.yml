@@ -1,14 +1,37 @@
-name: OpenUX Light
+name: OpenUX
 styles: theme.css
-colors:
-  primary: "#4569e8"
-  on-primary: "#ffffff"
-  ink: "#1e293b"
-  muted: "#566278"
-  background: "#f3f6fa"
-  panel: "#ffffff"
-  surface: "#ffffff"
-  surface-muted: "#f8f9fc"
-  border: "#dfe4ed"
-  border-muted: "#e8ecf2"
-  focus: "#aebeff"
+modes:
+  light:
+    colors:
+      primary: "#4569e8"
+      on-primary: "#ffffff"
+      ink: "#1e293b"
+      muted: "#566278"
+      background: "#f3f6fa"
+      panel: "#ffffff"
+      surface: "#ffffff"
+      surface-muted: "#f8f9fc"
+      border: "#dfe4ed"
+      border-muted: "#e8ecf2"
+      focus: "#aebeff"
+      success: "#158567"
+      danger: "#c34f5b"
+      warning: "#a26b1f"
+      warning-surface: "#fff5df"
+  dark:
+    colors:
+      primary: "#91a7ff"
+      on-primary: "#10182b"
+      ink: "#edf2ff"
+      muted: "#a6b1c7"
+      background: "#101827"
+      panel: "#172236"
+      surface: "#1d2a40"
+      surface-muted: "#24334b"
+      border: "#3a4a64"
+      border-muted: "#2d3b53"
+      focus: "#b0beff"
+      success: "#59d9ad"
+      danger: "#ff8b97"
+      warning: "#ffd17a"
+      warning-surface: "#554229"
