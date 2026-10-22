@@ -1,27 +1,30 @@
 <style>
+  :host { display: block; }
   .openux-centered-form {
+    box-sizing: border-box;
     display: grid;
-    gap: 24px;
+    place-items: center;
     width: 100%;
     max-width: ${attributes.max-width}px;
+    min-height: calc(100vh - 112px);
     margin: 0 auto;
-    color: var(--theme-ink);
+    padding: clamp(20px, 4vw, 56px);
+    color: var(--theme-ink, #1e293b);
+    background:
+      radial-gradient(ellipse at 12% 15%, color-mix(in srgb, var(--theme-primary, #4569e8) 12%, transparent), transparent 36%),
+      radial-gradient(ellipse at 90% 88%, color-mix(in srgb, var(--theme-primary, #4569e8) 9%, transparent), transparent 34%),
+      var(--theme-background, #f3f6fa);
     font-family: Inter, "Segoe UI", Arial, sans-serif;
   }
-  .openux-centered-form__heading { text-align: center; }
-  .openux-centered-form__title {
-    margin: 0 0 6px;
-    font-size: 22px;
-    font-weight: 750;
-    letter-spacing: -.4px;
+  .openux-centered-form__content {
+    display: block;
+    width: 100%;
+    max-width: 1100px;
   }
-  .openux-centered-form__description {
-    margin: 0;
-    color: var(--theme-muted);
-    font-size: 13px;
+  @media (max-width: 700px) {
+    .openux-centered-form { min-height: calc(100vh - 68px); padding: 16px; }
   }
-  .openux-centered-form__content { display: flex; flex-direction: column; gap: 14px; }
 </style>
-<section class="openux-centered-form">
+<main class="openux-centered-form">
   <div class="openux-centered-form__content" data-openux-slot="content"></div>
-</section>
+</main>

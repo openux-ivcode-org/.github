@@ -1,0 +1,20 @@
+<style>
+  .openux-sign-in-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 22px 0 16px;
+    color: var(--theme-muted, #718096);
+    font: 650 9px/1.5 Inter, "Segoe UI", Arial, sans-serif;
+    letter-spacing: .08em;
+    white-space: nowrap;
+  }
+  .openux-sign-in-divider::before,
+  .openux-sign-in-divider::after {
+    height: 1px;
+    flex: 1;
+    background: var(--theme-border-muted, #e8ecf2);
+    content: "";
+  }
+</style>
+<div class="openux-sign-in-divider">${attributes.label}</div>

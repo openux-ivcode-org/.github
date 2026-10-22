@@ -1204,6 +1204,20 @@
       h1 { max-width: 90px; }
       .reset-button, .save-button { padding: 6px; font-size: 10px; }
     }
+
+    body.render-only { min-width: 0; background: var(--theme-background, #fff); }
+    body.render-only .skip-link,
+    body.render-only .topbar,
+    body.render-only .sidebar,
+    body.render-only .inspector,
+    body.render-only .review-card,
+    body.render-only .workflow-output,
+    body.render-only .asset-context-menu,
+    body.render-only .asset-delete-dialog { display: none !important; }
+    body.render-only .workspace { display: block; width: 100%; height: 100vh; }
+    body.render-only .canvas { width: 100%; height: 100vh; min-height: 100vh; padding: 0; background: none; }
+    body.render-only .stage { width: 100%; height: 100vh; min-height: 100vh; overflow: visible; }
+    body.render-only .screen-preview { width: 100%; height: 100vh; min-height: 100vh; overflow: visible; }
   </style>
 </head>
 <body>
@@ -1298,6 +1312,7 @@
     </div>
   </dialog>
   <script src="./yaml.js"></script>
+  <script src="./validation.js"></script>
   <script src="./app.js" defer></script>
 </body>
 </html>

@@ -1,0 +1,16 @@
+id: sign-in-brand
+name: Sign-in Brand
+description: A compact brand mark and name for the sign-in page.
+category: Forms/Sign-in
+attributes:
+  mark:
+    type: string
+    default: N
+    overridable: true
+  brand-name:
+    type: string
+    default: Northstar
+    overridable: true
+render:
+  type: html-reference
+  source: asset.html

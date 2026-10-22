@@ -1,6 +1,6 @@
 # OpenUX: Scope and Core Concepts
 
-**Status:** Working draft
+**Status:** Working draft for background documentation
 
 ## 1. Purpose
 

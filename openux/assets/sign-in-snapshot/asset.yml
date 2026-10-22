@@ -1,0 +1,20 @@
+id: sign-in-snapshot
+name: Account Snapshot Preview
+description: A decorative balance summary card for the sign-in brand panel.
+category: Forms/Sign-in
+attributes:
+  label:
+    type: string
+    default: Total balance
+    overridable: true
+  amount:
+    type: string
+    default: "$24,680.50"
+    overridable: true
+  change:
+    type: string
+    default: ↗ 8.4% this month
+    overridable: true
+render:
+  type: html-reference
+  source: asset.html

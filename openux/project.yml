@@ -8,6 +8,28 @@ screens:
 assets:
   - id: centered-form-layout
     directory: assets/centered-form-layout
+  - id: sign-in-layout
+    directory: assets/sign-in-layout
+  - id: sign-in-brand
+    directory: assets/sign-in-brand
+  - id: sign-in-story
+    directory: assets/sign-in-story
+  - id: sign-in-snapshot
+    directory: assets/sign-in-snapshot
+  - id: sign-in-trust
+    directory: assets/sign-in-trust
+  - id: sign-in-heading
+    directory: assets/sign-in-heading
+  - id: sign-in-field-visual
+    directory: assets/sign-in-field-visual
+  - id: sign-in-options-visual
+    directory: assets/sign-in-options-visual
+  - id: sign-in-action-visual
+    directory: assets/sign-in-action-visual
+  - id: sign-in-divider
+    directory: assets/sign-in-divider
+  - id: sign-in-disclaimer
+    directory: assets/sign-in-disclaimer
   - id: text-field
     directory: assets/text-field
   - id: button

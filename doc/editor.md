@@ -1,6 +1,6 @@
 # Editor Requirements
 
-**Status:** Draft requirements for the future OpenUX editor; not normative.
+**Status:** Draft requirements for the OpenUX editor; not normative.
 
 The browser editor prototype is at the repository root; its sample project is in `openux/`. The prototype is exploratory and is used to try ideas and evaluate the intended experience. Its implementation choices and limitations are not requirements for the final product. This document describes the target product and should evolve as those requirements are refined.
 

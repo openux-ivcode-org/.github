@@ -1,0 +1,16 @@
+id: sign-in-options-visual
+name: Sign-in Options Preview
+description: A static reminder and recovery-link row; neither item is interactive.
+category: Forms/Sign-in
+attributes:
+  remember-label:
+    type: string
+    default: Remember this device
+    overridable: true
+  recovery-label:
+    type: string
+    default: Forgot password?
+    overridable: true
+render:
+  type: html-reference
+  source: asset.html

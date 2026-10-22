@@ -23,7 +23,7 @@ assets:
                 name: Available balance
                 attributes:
                   label: Available balance
-                  value: "$24,680.50"
+                  value: "$25,680.50"
                   change: "+$1,240 this month"
                   trend: positive
               - asset-template: dashboard-metric

@@ -16,6 +16,10 @@ async function withServer(run) {
   await fs.writeFile(path.join(rootDirectory, "openux", "project.yml"), "name: Example\n");
   await fs.writeFile(path.join(rootDirectory, "openux", "screen.yml"), "name: Before\n");
   await fs.writeFile(path.join(rootDirectory, "openux", "assets", "demo", "asset.html"), "<p>Before</p>");
+  await fs.writeFile(
+    path.join(rootDirectory, "openux", "assets", "demo", "preview image.png"),
+    Buffer.from("image")
+  );
   const server = createServer({ rootDirectory });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -33,10 +37,72 @@ test("serves the editor root and the example project", async () => {
   await withServer(async ({ baseUrl }) => {
     const editor = await fetch(baseUrl);
     const project = await fetch(`${baseUrl}/openux/project.yml`);
+    const encodedResource = await fetch(`${baseUrl}/openux/assets/demo/preview%20image.png`);
+    const traversal = await fetch(`${baseUrl}/openux/%2e%2e%2findex.html`);
     assert.equal(editor.status, 200);
     assert.match(await editor.text(), /Editor/);
     assert.equal(project.status, 200);
     assert.deepEqual(YAML.parse(await project.text()), { name: "Example" });
+    assert.equal(encodedResource.status, 200);
+    assert.equal(encodedResource.headers.get("content-type"), "image/png");
+    assert.deepEqual(Buffer.from(await encodedResource.arrayBuffer()), Buffer.from("image"));
+    assert.equal(traversal.status, 404);
+  });
+});
+
+test("reports server status and browser selection and notifies connected browsers", async () => {
+  await withServer(async ({ baseUrl }) => {
+    const status = await fetch(`${baseUrl}/api/status`);
+    assert.equal(status.status, 200);
+    assert.deepEqual(await status.json(), {
+      status: "ok",
+      url: baseUrl + "/",
+      connectedBrowsers: 0,
+      selectionAvailable: false
+    });
+
+    const selection = {
+      view: "screen",
+      screen: { id: "home", name: "Home", file: "screens/home.yml" }
+    };
+    const published = await fetch(`${baseUrl}/api/selection`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ selection })
+    });
+    assert.equal(published.status, 200);
+    const currentSelection = await fetch(`${baseUrl}/api/selection`);
+    const selectionState = await currentSelection.json();
+    assert.deepEqual(selectionState.selection, selection);
+    assert.equal(Number.isNaN(Date.parse(selectionState.updatedAt)), false);
+
+    const controller = new AbortController();
+    const events = await fetch(`${baseUrl}/api/events`, { signal: controller.signal });
+    const reader = events.body.getReader();
+    const decoder = new TextDecoder();
+    assert.match(decoder.decode((await reader.read()).value), /connected/);
+    const connectedStatus = await fetch(`${baseUrl}/api/status`);
+    assert.equal((await connectedStatus.json()).connectedBrowsers, 1);
+
+    const update = await fetch(`${baseUrl}/api/update`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    });
+    assert.deepEqual(await update.json(), { notifiedBrowsers: 1 });
+    assert.match(decoder.decode((await reader.read()).value), /event: project-updated/);
+    await reader.cancel();
+    controller.abort();
+
+    const rejected = await fetch(`${baseUrl}/api/update`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://example.invalid"
+      },
+      body: "{}"
+    });
+    assert.equal(rejected.status, 403);
   });
 });
 
@@ -232,7 +298,7 @@ test("rejects save paths outside the example project", async () => {
 
 test("does not serve repository files outside the editor and example project", async () => {
   await withServer(async ({ baseUrl }) => {
-    const privateFile = await fetch(`${baseUrl}/standard/editor.md`);
+    const privateFile = await fetch(`${baseUrl}/doc/editor.md`);
     const vcsData = await fetch(`${baseUrl}/.git/config`);
     assert.equal(privateFile.status, 404);
     assert.equal(vcsData.status, 404);

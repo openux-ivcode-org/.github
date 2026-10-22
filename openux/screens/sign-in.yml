@@ -1,37 +1,80 @@
 name: Sign In
-description: Allows a user to enter their account credentials.
-note: Keep the form focused and avoid adding unrelated content.
+description: A visual-only sign-in page concept for the Northstar financial app.
+note: Keep this preview static; do not collect or submit credentials.
 assets:
-  - asset-template: centered-form-layout
-    name: Sign-in form layout
-    description: Centers the sign-in fields in one content drop zone.
+  - asset-template: sign-in-layout
+    name: Northstar sign-in page
+    description: A responsive, visual-only sign-in composition.
+    note: Keep all nested elements static; this preview must not collect or submit credentials.
     slots:
-      content:
-        - asset-template: text-field
-          name: Email address
-          description: Collects the user's email address.
-          note: Require valid email formatting.
+      brand:
+        - asset-template: sign-in-brand
+          name: Northstar brand
           attributes:
-            label: Email
-            input-type: email
-            required: true
-        - asset-template: text-field
-          name: Password
-          description: Collects the user's password.
-          note: Hide the password while it is being entered.
+            mark: N
+            brand-name: Northstar
+        - asset-template: sign-in-story
+          name: Brand story
+          attributes:
+            eyebrow: A clearer view of your money
+            title: Make room for what matters.
+            description: Bring your accounts together, follow your progress, and feel more confident about what comes next.
+        - asset-template: sign-in-snapshot
+          name: Account balance preview
+          attributes:
+            label: Total balance
+            amount: "$24,680.50"
+            change: ↗ 8.4% this month
+        - asset-template: sign-in-trust
+          name: Privacy note
+          attributes:
+            message: Private by design · Protected with care
+      content:
+        - asset-template: sign-in-heading
+          name: Sign-in heading
+          attributes:
+            kicker: Your financial home
+            title: Welcome back
+            description: Sign in to pick up right where you left off.
+        - asset-template: sign-in-field-visual
+          name: Email field preview
+          description: Static visual representation of an email field.
+          attributes:
+            label: Email address
+            preview-value: jordan.davis@example.com
+            hint: EMAIL
+            icon: "@"
+        - asset-template: sign-in-field-visual
+          name: Password field preview
+          description: Static visual representation of a password field.
           attributes:
             label: Password
-            input-type: password
-            required: true
-        - asset-template: button
-          name: Sign-in button
-          description: Submits the entered credentials.
+            preview-value: ••••••••••••
+            hint: ◉
+            icon: "•"
+        - asset-template: sign-in-options-visual
+          name: Sign-in options preview
           attributes:
-            label: Sign in
-          interactions:
-            - event: click
-              action:
-                type: invoke-workflow
-                workflow: login
-    attributes:
-      max-width: 640
+            remember-label: Remember this device
+            recovery-label: Forgot password?
+        - asset-template: sign-in-action-visual
+          name: Primary sign-in action preview
+          description: Static visual representation of the primary sign-in action.
+          attributes:
+            label: Continue to dashboard
+            variant: primary
+        - asset-template: sign-in-divider
+          name: Alternative sign-in divider
+          attributes:
+            label: OR CONTINUE WITH
+        - asset-template: sign-in-action-visual
+          name: Google sign-in option preview
+          description: Static visual representation of an alternative sign-in option.
+          attributes:
+            label: Continue with Google
+            variant: secondary
+            mark: G
+        - asset-template: sign-in-disclaimer
+          name: Preview disclaimer
+          attributes:
+            text: Visual preview only — no credentials are collected or submitted.

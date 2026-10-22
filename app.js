@@ -5,10 +5,11 @@ const booleanHtmlAttributes = new Set([
   "muted", "nomodule", "novalidate", "open", "playsinline", "readonly", "required",
   "reversed", "selected"
 ]);
-const attributeTypes = ["string", "boolean", "list", "number"];
-const numberFormats = ["integer", "decimal", "currency", "percentage"];
-const themeModeNames = ["light", "dark"];
+const sharedValidation = window.OpenuxValidation;
+const { attributeTypes, numberFormats, themeModeNames } = sharedValidation;
 const systemThemeQuery = window.matchMedia?.("(prefers-color-scheme: dark)");
+const renderRequestedScreen = new URLSearchParams(window.location.search).get("render");
+const isRenderOnly = renderRequestedScreen !== null;
 const assetDragType = "application/x-openux-asset-template";
 const assetInstanceDragType = "application/x-openux-asset-instance";
 const byId = (id) => document.getElementById(id);
@@ -50,6 +51,8 @@ let editorFieldId = 0;
 let assetStyleScopeId = 0;
 let workflowDiagramResizeObserver = null;
 
+if (isRenderOnly) document.body.classList.add("render-only");
+
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -88,182 +91,31 @@ async function loadYaml(path) {
 }
 
 function assetCategoryPath(template, source) {
-  if (template.category === undefined) return ["Uncategorized"];
-  if (typeof template.category !== "string" || !template.category.trim()) {
-    throw new Error(`${source} category must be a non-empty slash-delimited path.`);
-  }
-  const segments = template.category.split("/").map((segment) => segment.trim());
-  if (segments.some((segment) => !segment)) {
-    throw new Error(`${source} category cannot contain empty path segments.`);
-  }
-  return segments;
+  return sharedValidation.assetCategoryPath(template, source);
 }
 
 function validateAssetAttributes(template, source) {
-  const attributes = template.attributes || {};
-  if (Array.isArray(attributes) || typeof attributes !== "object") {
-    throw new Error(`${source} attributes must be a mapping.`);
-  }
-  for (const [name, definition] of Object.entries(attributes)) {
-    if (!definition || Array.isArray(definition) || typeof definition !== "object") {
-      throw new Error(`${source} attribute "${name}" must be a mapping.`);
-    }
-    if (!attributeTypes.includes(definition.type)) {
-      throw new Error(`${source} attribute "${name}" has unsupported type "${definition.type}".`);
-    }
-    if (definition.overridable !== undefined && typeof definition.overridable !== "boolean") {
-      throw new Error(`${source} attribute "${name}" overridable must be a boolean.`);
-    }
-    if (definition.type === "number") {
-      const format = definition.format || "decimal";
-      if (!numberFormats.includes(format)) {
-        throw new Error(`${source} attribute "${name}" has unsupported number format "${format}".`);
-      }
-    } else if (definition.format !== undefined) {
-      throw new Error(`${source} attribute "${name}" can only define a number format when its type is number.`);
-    }
-    if (definition.type === "list") {
-      if (!Array.isArray(definition.options) || definition.options.length === 0) {
-        throw new Error(`${source} list attribute "${name}" must define at least one option.`);
-      }
-      if (definition.options.some((option) => typeof option !== "string") ||
-          new Set(definition.options).size !== definition.options.length) {
-        throw new Error(`${source} list attribute "${name}" options must be unique strings.`);
-      }
-    } else if (definition.options !== undefined) {
-      throw new Error(`${source} attribute "${name}" can only define options when its type is list.`);
-    }
-    if (Object.hasOwn(definition, "default") && !isValidAttributeValue(definition, definition.default)) {
-      throw new Error(`${source} attribute "${name}" has a default that does not match its type.`);
-    }
-  }
+  return sharedValidation.validateAssetAttributes(template, source);
 }
 
 function validateAssetSlots(template, source) {
-  if (template.slots === undefined) return;
-  if (!Array.isArray(template.slots) || template.slots.length === 0) {
-    throw new Error(`${source} slots must be a non-empty list.`);
-  }
-  const ids = new Set();
-  for (const slot of template.slots) {
-    if (!slot || Array.isArray(slot) || typeof slot !== "object" ||
-        typeof slot.id !== "string" || !/^[a-z][a-z0-9-]*$/.test(slot.id)) {
-      throw new Error(`${source} slots must have an id using lowercase letters, numbers, and hyphens.`);
-    }
-    if (ids.has(slot.id)) throw new Error(`${source} defines slot "${slot.id}" more than once.`);
-    if (slot.name !== undefined && typeof slot.name !== "string") {
-      throw new Error(`${source} slot "${slot.id}" name must be a string.`);
-    }
-    ids.add(slot.id);
-  }
+  return sharedValidation.validateAssetSlots(template, source);
 }
 
 function validateAssetSlotMarkup(template, markup, source) {
-  if (!template.slots) return;
-  const parsed = new DOMParser().parseFromString(markup, "text/html");
-  const markupSlots = [...parsed.querySelectorAll("[data-openux-slot]")];
-  const declaredSlots = new Set(template.slots.map((slot) => slot.id));
-  for (const slot of template.slots) {
-    const matching = markupSlots.filter((node) => node.getAttribute("data-openux-slot") === slot.id);
-    if (matching.length !== 1) {
-      throw new Error(`${source} must contain exactly one element with data-openux-slot="${slot.id}".`);
-    }
-  }
-  for (const slot of markupSlots) {
-    const id = slot.getAttribute("data-openux-slot");
-    if (!declaredSlots.has(id)) {
-      throw new Error(`${source} contains undeclared layout slot "${id}".`);
-    }
-  }
+  return sharedValidation.validateAssetSlotMarkup(template, markup, source);
 }
 
 function validateTheme(data, source) {
-  const validateColors = (colors, location) => {
-    if (colors === undefined) return;
-    if (!colors || Array.isArray(colors) || typeof colors !== "object") {
-      throw new Error(`${location} colors must be a mapping.`);
-    }
-    for (const [name, value] of Object.entries(colors)) {
-      if (typeof value !== "string") {
-        throw new Error(`${location} color "${name}" must be a string.`);
-      }
-    }
-  };
-
-  validateColors(data.colors, source);
-  if (data.modes === undefined) return;
-  if (!data.modes || Array.isArray(data.modes) || typeof data.modes !== "object") {
-    throw new Error(`${source} modes must be a mapping.`);
-  }
-  for (const [mode, variant] of Object.entries(data.modes)) {
-    if (!themeModeNames.includes(mode)) {
-      throw new Error(`${source} defines unsupported theme mode "${mode}".`);
-    }
-    if (!variant || Array.isArray(variant) || typeof variant !== "object") {
-      throw new Error(`${source} ${mode} mode must be a mapping.`);
-    }
-    validateColors(variant.colors, `${source} ${mode} mode`);
-  }
+  return sharedValidation.validateTheme(data, source);
 }
 
 function validateWorkflow(data, workflowId) {
-  const source = `Workflow "${workflowId}"`;
-  if (!data || Array.isArray(data) || typeof data !== "object") {
-    throw new Error(`${source} must be a YAML mapping.`);
-  }
-  if (data.id !== workflowId) {
-    throw new Error(`${source} id must remain "${workflowId}".`);
-  }
-  if (typeof data.entry !== "string" || !data.entry) {
-    throw new Error(`${source} must define an entry step id.`);
-  }
-  if (!Array.isArray(data.steps) || data.steps.length === 0) {
-    throw new Error(`${source} must define at least one step.`);
-  }
-
-  const stepIds = new Set();
-  for (const step of data.steps) {
-    if (!step || Array.isArray(step) || typeof step !== "object" ||
-        typeof step.id !== "string" || !/^[a-z][a-z0-9-]*$/.test(step.id)) {
-      throw new Error(`${source} steps must have ids using lowercase letters, numbers, and hyphens.`);
-    }
-    if (stepIds.has(step.id)) throw new Error(`${source} defines step "${step.id}" more than once.`);
-    stepIds.add(step.id);
-  }
-  if (!stepIds.has(data.entry)) {
-    throw new Error(`${source} entry references unknown step "${data.entry}".`);
-  }
-
-  const screenIds = new Set(screens.map((screen) => screen.id));
-  for (const step of data.steps) {
-    if (!Array.isArray(step.transitions) || step.transitions.length === 0) {
-      throw new Error(`${source} step "${step.id}" must define at least one transition.`);
-    }
-    for (const [index, transition] of step.transitions.entries()) {
-      if (!transition || Array.isArray(transition) || typeof transition !== "object") {
-        throw new Error(`${source} step "${step.id}" transition ${index + 1} must be a mapping.`);
-      }
-      if (typeof transition.when !== "string" || !transition.when.trim()) {
-        throw new Error(`${source} step "${step.id}" transition ${index + 1} must describe when it applies.`);
-      }
-      const destinations = ["next", "to", "result"].filter((key) => Object.hasOwn(transition, key));
-      if (destinations.length !== 1) {
-        throw new Error(`${source} step "${step.id}" transition ${index + 1} must define exactly one of next, to, or result.`);
-      }
-      if (Object.hasOwn(transition, "next") &&
-          (typeof transition.next !== "string" || !stepIds.has(transition.next))) {
-        throw new Error(`${source} step "${step.id}" transition ${index + 1} references an unknown next step.`);
-      }
-      if (Object.hasOwn(transition, "to") &&
-          (typeof transition.to !== "string" || !screenIds.has(transition.to))) {
-        throw new Error(`${source} step "${step.id}" transition ${index + 1} references an unknown Screen.`);
-      }
-      if (Object.hasOwn(transition, "result") &&
-          (typeof transition.result !== "string" || !transition.result.trim())) {
-        throw new Error(`${source} step "${step.id}" transition ${index + 1} must describe its result.`);
-      }
-    }
-  }
+  return sharedValidation.validateWorkflow(
+    data,
+    workflowId,
+    screens.map((screen) => screen.id)
+  );
 }
 
 function getDefinedThemeModes() {
@@ -303,19 +155,10 @@ function currentThemeLabel() {
 }
 
 function isValidAttributeValue(definition, value) {
-  if (definition.type === "string") return typeof value === "string";
-  if (definition.type === "boolean") return typeof value === "boolean";
-  if (definition.type === "list") {
-    return typeof value === "string" && definition.options?.includes(value) === true;
-  }
-  if (definition.type === "number") {
-    if (typeof value !== "number" || !Number.isFinite(value)) return false;
-    return (definition.format || "decimal") !== "integer" || Number.isInteger(value);
-  }
-  return false;
+  return sharedValidation.isValidAttributeValue(definition, value);
 }
 
-async function loadProject() {
+async function loadProject(selectionToRestore = null) {
   clearTimeout(assetPreviewTimer);
   assetPreviewTimer = null;
   assetPreviewVersion += 1;
@@ -433,10 +276,174 @@ async function loadProject() {
     applyTheme();
     renderNavigation();
     updateReviewCard();
-    renderScreen(0);
+    if (isRenderOnly) {
+      const renderIndex = screens.findIndex((screen) => screen.id === renderRequestedScreen);
+      if (renderIndex < 0) throw new Error(`Unknown Screen "${renderRequestedScreen}".`);
+      await renderScreen(renderIndex);
+      if (byId("screen-preview").classList.contains("error")) {
+        throw new Error(byId("screen-preview").textContent.trim() || "Screen render failed.");
+      }
+      document.body.dataset.openuxRenderHeight = String(Math.ceil(Math.max(
+        document.documentElement.scrollHeight,
+        document.body.scrollHeight,
+        byId("screen-preview").scrollHeight
+      )));
+      document.body.dataset.openuxRenderReady = "true";
+      if (new URLSearchParams(window.location.search).get("format") === "html") {
+        document.body.dataset.openuxRenderHtml = encodeBase64(standaloneScreenHtml());
+      }
+    } else if (selectionToRestore) {
+      await restoreUiSelection(selectionToRestore);
+    } else {
+      await renderScreen(0);
+    }
   } catch (error) {
     showFatalError(error);
   }
+}
+
+function encodeBase64(value) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function cloneRenderedNode(node) {
+  if (node.nodeType === Node.TEXT_NODE) return document.createTextNode(node.textContent);
+  if (node.nodeType !== Node.ELEMENT_NODE) return node.cloneNode(false);
+  const copy = node.cloneNode(false);
+  const children = node.shadowRoot ? node.shadowRoot.childNodes : node.childNodes;
+  if (node.shadowRoot) {
+    const shadowTemplate = document.createElement("template");
+    shadowTemplate.setAttribute("shadowrootmode", "open");
+    for (const child of children) shadowTemplate.content.append(cloneRenderedNode(child));
+    copy.append(shadowTemplate);
+  } else {
+    for (const child of children) copy.append(cloneRenderedNode(child));
+  }
+  return copy;
+}
+
+function standaloneScreenHtml() {
+  const outputDocument = document.implementation.createHTMLDocument("");
+  outputDocument.documentElement.lang = "en";
+  const rootStyle = document.documentElement.getAttribute("style") || "";
+  if (rootStyle) outputDocument.documentElement.setAttribute("style", rootStyle);
+  const charset = outputDocument.createElement("meta");
+  charset.setAttribute("charset", "utf-8");
+  outputDocument.head.append(charset);
+  for (const style of document.head.querySelectorAll("style")) {
+    outputDocument.head.append(style.cloneNode(true));
+  }
+  outputDocument.body.append(cloneRenderedNode(byId("screen-preview")));
+  return `<!doctype html>\n${outputDocument.documentElement.outerHTML}\n`;
+}
+
+function currentUiSelection() {
+  const screen = screens[activeScreenIndex] || null;
+  const screenContext = screen ? {
+    id: screen.id,
+    name: screen.data.name || screen.id,
+    file: screen.file
+  } : null;
+  if (viewingProject) return { view: "project", screen: screenContext };
+  if (viewingTheme) return { view: "theme", screen: screenContext, file: project?.theme || null };
+  if (viewingWorkflow) {
+    const workflow = workflows.get(activeWorkflowId);
+    return {
+      view: "workflow",
+      screen: screenContext,
+      workflow: workflow ? {
+        id: workflow.id,
+        name: workflow.data.name || workflow.id,
+        file: workflow.file,
+        selectedStepId: activeWorkflowStepId
+      } : null
+    };
+  }
+  if (viewingAssetTemplate) {
+    const template = assets.get(activeAssetId);
+    return {
+      view: "asset-template",
+      screen: screenContext,
+      asset: template ? {
+        id: template.id,
+        name: template.data.name || template.id,
+        directory: template.directory,
+        manifestFile: `${template.directory}/asset.yml`,
+        htmlFile: template.htmlFile
+      } : null
+    };
+  }
+  const instance = screen && activeAssetId ? getInstanceAtPath(screen, activeInstancePath) : null;
+  const template = activeAssetId ? assets.get(activeAssetId) : null;
+  return {
+    view: "screen",
+    screen: screenContext,
+    selectedAsset: instance && template ? {
+      id: template.id,
+      name: instance.name || template.data.name || template.id,
+      instancePath: activeInstancePath,
+      instance,
+      template: {
+        name: template.data.name || template.id,
+        description: template.data.description || "",
+        attributes: template.data.attributes || {},
+        slots: template.data.slots || []
+      }
+    } : null
+  };
+}
+
+async function restoreUiSelection(selection) {
+  const screenIndex = screens.findIndex((screen) => screen.id === selection.screen?.id);
+  activeScreenIndex = screenIndex >= 0 ? screenIndex : 0;
+  if (selection.view === "project") {
+    renderProjectOverview();
+    return;
+  }
+  if (selection.view === "theme") {
+    byId("theme-nav").click();
+    return;
+  }
+  if (selection.view === "workflow" && workflows.has(selection.workflow?.id)) {
+    renderWorkflowEditor(selection.workflow.id);
+    const workflow = workflows.get(selection.workflow.id);
+    if (workflow.data.steps.some((step) => step.id === selection.workflow.selectedStepId)) {
+      activeWorkflowStepId = selection.workflow.selectedStepId;
+      renderWorkflowDiagram(workflow);
+      renderInspector();
+    }
+    return;
+  }
+  if (selection.view === "asset-template" && assets.has(selection.asset?.id)) {
+    await renderAssetTemplate(selection.asset.id);
+    return;
+  }
+  await renderScreen(activeScreenIndex);
+  const instancePath = selection.selectedAsset?.instancePath;
+  if (Array.isArray(instancePath)) {
+    const screen = screens[activeScreenIndex];
+    const instance = screen && getInstanceAtPath(screen, instancePath);
+    if (instance) selectInstance(instancePath, instance["asset-template"]);
+  }
+}
+
+function refreshFromExternalChanges() {
+  if (hasEdits) {
+    showWorkflowOutput(
+      "Project files changed outside the editor",
+      "Save or reset your editor changes before refreshing from disk."
+    );
+    return;
+  }
+  loadProject(currentUiSelection());
+}
+
+if (!isRenderOnly && typeof EventSource !== "undefined") {
+  const projectEvents = new EventSource("/api/events");
+  projectEvents.addEventListener("project-updated", refreshFromExternalChanges);
 }
 
 function applyTheme() {
@@ -1467,6 +1474,7 @@ function renderWorkflowDiagram(workflow) {
   fitDiagram();
   workflowDiagramResizeObserver = new ResizeObserver(fitDiagram);
   workflowDiagramResizeObserver.observe(diagram);
+  publishSelection();
 }
 
 function renderWorkflowDetails(panel) {
@@ -2447,6 +2455,16 @@ function updateNavigationSelection() {
   if (viewingProject) projectButton.setAttribute("aria-current", "page");
   else projectButton.removeAttribute("aria-current");
   byId("review-card").hidden = viewingProject;
+  publishSelection();
+}
+
+function publishSelection() {
+  if (isRenderOnly) return;
+  fetch("/api/selection", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ selection: currentUiSelection() })
+  }).catch((error) => console.warn("Could not publish the current OpenUX selection.", error));
 }
 
 function renderInspector() {

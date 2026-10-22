@@ -1,0 +1,29 @@
+<style>
+  .openux-sign-in-heading { font-family: Inter, "Segoe UI", Arial, sans-serif; }
+  .openux-sign-in-heading__kicker {
+    margin: 0 0 9px;
+    color: var(--theme-primary, #4569e8);
+    font-size: 10px;
+    font-weight: 750;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+  }
+  .openux-sign-in-heading__title {
+    margin: 0;
+    color: var(--theme-ink, #1e293b);
+    font-size: 29px;
+    font-weight: 730;
+    letter-spacing: -.045em;
+    line-height: 1.2;
+  }
+  .openux-sign-in-heading__description {
+    margin: 9px 0 0;
+    color: var(--theme-muted, #566278);
+    font-size: 12px;
+  }
+</style>
+<header class="openux-sign-in-heading">
+  <p class="openux-sign-in-heading__kicker">${attributes.kicker}</p>
+  <h2 class="openux-sign-in-heading__title">${attributes.title}</h2>
+  <p class="openux-sign-in-heading__description">${attributes.description}</p>
+</header>

@@ -1,0 +1,90 @@
+<style>
+  :host { display: block; }
+  .openux-sign-in-layout {
+    display: grid;
+    grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr);
+    width: 100%;
+    min-height: 620px;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--theme-ink, #1e293b) 8%, transparent);
+    border-radius: 26px;
+    background: var(--theme-surface, #fff);
+    box-shadow: 0 32px 80px rgba(30, 45, 80, .16), 0 4px 12px rgba(30, 45, 80, .06);
+    color: var(--theme-ink, #1e293b);
+    font: 14px/1.5 Inter, "Segoe UI", Arial, sans-serif;
+  }
+  .openux-sign-in-layout__brand,
+  .openux-sign-in-layout__content {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 0;
+  }
+  .openux-sign-in-layout__brand {
+    position: relative;
+    justify-content: space-between;
+    overflow: hidden;
+    padding: 38px;
+    color: #fff;
+    background:
+      radial-gradient(ellipse at 88% 14%, rgba(145, 167, 255, .52), transparent 34%),
+      radial-gradient(ellipse at 4% 100%, rgba(72, 111, 229, .58), transparent 48%),
+      linear-gradient(145deg, #14234a 0%, #243c78 55%, #3153a0 100%);
+  }
+  .openux-sign-in-layout__brand::before,
+  .openux-sign-in-layout__brand::after {
+    position: absolute;
+    right: -108px;
+    bottom: 82px;
+    width: 310px;
+    height: 310px;
+    border: 1px solid rgba(255, 255, 255, .13);
+    border-radius: 50%;
+    content: "";
+    pointer-events: none;
+  }
+  .openux-sign-in-layout__brand::after {
+    right: -68px;
+    bottom: 122px;
+    width: 230px;
+    height: 230px;
+    border-color: rgba(255, 255, 255, .1);
+  }
+  .openux-sign-in-layout__content {
+    justify-content: center;
+    padding: 46px clamp(28px, 5vw, 68px);
+    background: var(--theme-surface, #fff);
+  }
+  .openux-sign-in-layout__brand > .asset-instance,
+  .openux-sign-in-layout__content > .asset-instance {
+    position: relative;
+    z-index: 1;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 10px;
+  }
+  .openux-sign-in-layout__brand > .asset-instance.selected,
+  .openux-sign-in-layout__content > .asset-instance.selected {
+    border-color: color-mix(in srgb, var(--theme-primary, #4569e8) 40%, transparent);
+    background: color-mix(in srgb, var(--theme-primary, #4569e8) 5%, transparent);
+  }
+  @media (max-width: 780px) {
+    .openux-sign-in-layout { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+    .openux-sign-in-layout__brand { min-height: 290px; padding: 25px; }
+    .openux-sign-in-layout__content { padding: 34px 25px; }
+    .openux-sign-in-layout__brand > .asset-instance:nth-child(3),
+    .openux-sign-in-layout__brand > .asset-instance:nth-child(4) { display: none; }
+  }
+  @media (max-width: 420px) {
+    .openux-sign-in-layout__brand { min-height: 250px; }
+    .openux-sign-in-layout__content { padding: 28px 20px; }
+  }
+</style>
+<section class="openux-sign-in-layout" aria-label="Sign-in page visual preview">
+  <aside class="openux-sign-in-layout__brand" data-openux-slot="brand"></aside>
+  <main class="openux-sign-in-layout__content" data-openux-slot="content"></main>
+</section>

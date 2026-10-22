@@ -11,11 +11,19 @@ const CONTENT_TYPES = new Map([
   [".html", "text/html; charset=utf-8"],
   [".js", "text/javascript; charset=utf-8"],
   [".json", "application/json; charset=utf-8"],
+  [".avif", "image/avif"],
+  [".bmp", "image/bmp"],
+  [".gif", "image/gif"],
+  [".ico", "image/x-icon"],
   [".svg", "image/svg+xml"],
   [".webp", "image/webp"],
   [".png", "image/png"],
   [".jpg", "image/jpeg"],
   [".jpeg", "image/jpeg"],
+  [".otf", "font/otf"],
+  [".ttf", "font/ttf"],
+  [".woff", "font/woff"],
+  [".woff2", "font/woff2"],
   [".yml", "text/yaml; charset=utf-8"],
   [".yaml", "text/yaml; charset=utf-8"]
 ]);
@@ -197,27 +205,36 @@ async function saveProjectFiles(projectRoot, files) {
 
 async function serveStatic(rootDirectory, projectRoot, pathname, response) {
   let relativePath;
+  let allowedRoot = rootDirectory;
   if (pathname === "/") relativePath = "index.html";
-  else if (pathname === "/index.html" || pathname === "/app.js" || pathname === "/yaml.js") {
+  else if (pathname === "/index.html" || pathname === "/app.js" ||
+      pathname === "/yaml.js" || pathname === "/validation.js") {
     relativePath = pathname.slice(1);
   } else if (pathname.startsWith("/openux/")) {
-    const projectPath = pathname.slice("/openux/".length);
-    if (projectPath.split("/").some((segment) =>
+    let projectPath;
+    try {
+      projectPath = decodeURIComponent(pathname.slice("/openux/".length));
+    } catch {
+      sendJson(response, 404, { error: "File not found." });
+      return;
+    }
+    if (projectPath.includes("\\") || projectPath.includes("\0") ||
+        path.win32.isAbsolute(projectPath) || projectPath.split("/").some((segment) =>
       !segment || segment === "." || segment === ".." || segment.startsWith(".")
     )) {
       sendJson(response, 404, { error: "File not found." });
       return;
     }
-    relativePath = path.join("openux", ...projectPath.split("/"));
+    allowedRoot = projectRoot;
+    relativePath = path.join(...projectPath.split("/"));
   } else {
     sendJson(response, 404, { error: "File not found." });
     return;
   }
 
-  const target = path.resolve(rootDirectory, relativePath);
+  const target = path.resolve(allowedRoot, relativePath);
   try {
     const realTarget = await fs.realpath(target);
-    const allowedRoot = relativePath.startsWith(`openux${path.sep}`) ? projectRoot : rootDirectory;
     if (!isWithin(allowedRoot, realTarget)) {
       sendJson(response, 404, { error: "File not found." });
       return;
@@ -246,13 +263,75 @@ async function serveStatic(rootDirectory, projectRoot, pathname, response) {
 
 function createServer(options = {}) {
   const rootDirectory = path.resolve(options.rootDirectory || __dirname);
-  const projectRoot = path.join(rootDirectory, "openux");
-  return http.createServer(async (request, response) => {
+  const projectRoot = path.resolve(options.projectRoot || path.join(rootDirectory, "openux"));
+  const eventClients = new Set();
+  const selectionState = { selection: null, updatedAt: null };
+  let server;
+  server = http.createServer(async (request, response) => {
     let pathname;
     try {
       pathname = new URL(request.url, "http://localhost").pathname;
       if (request.method === "GET") {
+        if (pathname === "/api/status") {
+          const address = server.address();
+          sendJson(response, 200, {
+            status: "ok",
+            url: address && typeof address === "object"
+              ? `http://127.0.0.1:${address.port}/`
+              : null,
+            connectedBrowsers: eventClients.size,
+            selectionAvailable: selectionState.selection !== null
+          });
+          return;
+        }
+        if (pathname === "/api/selection") {
+          sendJson(response, 200, selectionState);
+          return;
+        }
+        if (pathname === "/api/events") {
+          response.writeHead(200, {
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Cache-Control": "no-cache, no-transform",
+            Connection: "keep-alive",
+            "X-Accel-Buffering": "no"
+          });
+          response.write(": connected\n\n");
+          eventClients.add(response);
+          response.on("close", () => eventClients.delete(response));
+          return;
+        }
         await serveStatic(rootDirectory, projectRoot, pathname, response);
+        return;
+      }
+      if (request.method === "POST" && pathname === "/api/selection") {
+        const body = await readJsonBody(request);
+        if (!body || Array.isArray(body) || typeof body !== "object" ||
+            !Object.hasOwn(body, "selection") ||
+            (body.selection !== null && (Array.isArray(body.selection) || typeof body.selection !== "object"))) {
+          throw requestError("Selection updates must contain an object or null.");
+        }
+        selectionState.selection = body.selection;
+        selectionState.updatedAt = new Date().toISOString();
+        sendJson(response, 200, { updated: true });
+        return;
+      }
+      if (request.method === "POST" && pathname === "/api/update") {
+        const origin = request.headers.origin;
+        if (origin) {
+          let originUrl;
+          try {
+            originUrl = new URL(origin);
+          } catch {
+            throw requestError("Update requests must originate from the local editor.", 403);
+          }
+          if (!["localhost", "127.0.0.1", "[::1]"].includes(originUrl.hostname)) {
+            throw requestError("Update requests must originate from the local editor.", 403);
+          }
+        }
+        const timestamp = new Date().toISOString();
+        const message = `event: project-updated\ndata: ${JSON.stringify({ timestamp })}\n\n`;
+        for (const client of eventClients) client.write(message);
+        sendJson(response, 200, { notifiedBrowsers: eventClients.size });
         return;
       }
       if (request.method === "POST" && pathname === "/api/save") {
@@ -286,6 +365,7 @@ function createServer(options = {}) {
       sendJson(response, error.statusCode || 500, { error: error.message || "Request failed." });
     }
   });
+  return server;
 }
 
 if (require.main === module) {

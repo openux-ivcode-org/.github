@@ -1,0 +1,20 @@
+id: sign-in-story
+name: Sign-in Brand Story
+description: A standalone brand message with eyebrow, headline, and supporting copy.
+category: Forms/Sign-in
+attributes:
+  eyebrow:
+    type: string
+    default: A clearer view of your money
+    overridable: true
+  title:
+    type: string
+    default: Make room for what matters.
+    overridable: true
+  description:
+    type: string
+    default: Bring your accounts together and feel more confident about what comes next.
+    overridable: true
+render:
+  type: html-reference
+  source: asset.html
