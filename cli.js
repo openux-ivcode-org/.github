@@ -26,6 +26,7 @@ function usage() {
     "  openux server status [--port <port>]",
     "  openux server selected [--port <port>]",
     "  openux server update [--port <port>]",
+    "  openux init [--project <directory>]",
     "  openux validate [--project <directory>]",
     "  openux schema [project|screen|asset|theme|workflow]",
     "  openux render <screen> --format <html|image> [--output <file>] [--project <directory>]",
@@ -209,6 +210,109 @@ async function runValidateCommand(args) {
   const projectRoot = await locateProjectRoot(process.cwd(), options.project);
   const result = await validateProject(projectRoot);
   return printValidationResult(result);
+}
+
+async function runInitCommand(args) {
+  const { positional, options } = parseOptions(args, new Set(["--project"]));
+  if (positional.length) throw new Error(`Unexpected argument "${positional[0]}".`);
+
+  const workingDirectory = path.resolve(process.cwd(), options.project || ".");
+  const projectDirectory = path.join(workingDirectory, "openux");
+  const files = [
+    ["project.yml", YAML.stringify({
+      name: "OpenUX Project",
+      screens: [{ id: "home", file: "screens/home.yml" }],
+      assets: [{ id: "page-layout", directory: "assets/page-layout" }],
+      theme: "theme/theme.yml"
+    })],
+    ["screens/home.yml", YAML.stringify({
+      name: "Home",
+      description: "Starter Screen for the OpenUX project.",
+      assets: [{
+        "asset-template": "page-layout",
+        name: "Page layout",
+        slots: { content: [] }
+      }]
+    })],
+    ["assets/page-layout/asset.yml", YAML.stringify({
+      id: "page-layout",
+      name: "Page Layout",
+      description: "A simple page layout with a content slot.",
+      slots: [{ id: "content", name: "Content" }],
+      render: { type: "html-reference" }
+    })],
+    ["assets/page-layout/asset.html", [
+      '<main class="page-layout">',
+      "  <h1>Welcome to OpenUX</h1>",
+      '  <div data-openux-slot="content"></div>',
+      "</main>",
+      "",
+      "<style>",
+      "  .page-layout {",
+      "    box-sizing: border-box;",
+      "    min-height: 100vh;",
+      "    padding: 3rem;",
+      "    color: var(--theme-ink, #1e293b);",
+      "    background: var(--theme-background, #f3f6fa);",
+      "    font-family: system-ui, sans-serif;",
+      "  }",
+      "</style>",
+      ""
+    ].join("\n")],
+    ["theme/theme.yml", YAML.stringify({
+      name: "Default",
+      colors: {
+        primary: "#4569e8",
+        ink: "#1e293b",
+        background: "#f3f6fa"
+      }
+    })]
+  ];
+
+  const conflicts = [];
+  for (const [relativePath] of files) {
+    const target = path.join(projectDirectory, relativePath);
+    try {
+      await fs.lstat(target);
+      conflicts.push(relativePath);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  if (conflicts.length) {
+    throw new Error(
+      `Cannot initialize OpenUX because these files already exist in "${projectDirectory}": ${conflicts.join(", ")}.`
+    );
+  }
+
+  const createdFiles = [];
+  try {
+    for (const [relativePath, content] of files) {
+      const target = path.join(projectDirectory, relativePath);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.writeFile(target, content, { flag: "wx" });
+      createdFiles.push(target);
+    }
+  } catch (error) {
+    const cleanupErrors = [];
+    for (const target of createdFiles) {
+      try {
+        await fs.rm(target);
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
+    }
+    if (cleanupErrors.length) {
+      throw new AggregateError(
+        [error, ...cleanupErrors],
+        "OpenUX initialization failed and some created files could not be removed."
+      );
+    }
+    throw error;
+  }
+
+  console.log(`Created OpenUX starter project in "${projectDirectory}".`);
+  console.log('Run "openux validate" to check the new project.');
 }
 
 function findBrowserExecutable() {
@@ -612,6 +716,7 @@ async function main(args = process.argv.slice(2)) {
     if (!subcommand) throw new Error("Usage: openux server <start|status|selected|update>");
     return runServerCommand(subcommand, subArgs);
   }
+  if (command === "init") return runInitCommand(rest);
   if (command === "schema") return runSchemaCommand(rest);
   if (command === "validate") return runValidateCommand(rest);
   if (command === "render") return runRenderCommand(rest);
@@ -633,5 +738,6 @@ module.exports = {
   inlineProjectResources,
   locateProjectRoot,
   pruneCandidates,
+  runInitCommand,
   runPruneCommand
 };

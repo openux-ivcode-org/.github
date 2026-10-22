@@ -98,6 +98,47 @@ test("validates a complete OpenUX project and its asset bundle", async () => {
   }
 });
 
+test("init creates a valid starter project", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "openux-init-test-"));
+  try {
+    const initialized = spawnSync(process.execPath, [cliPath, "init", "--project", root], {
+      encoding: "utf8"
+    });
+    assert.equal(initialized.status, 0, initialized.stderr);
+    assert.match(initialized.stdout, /Created OpenUX starter project/);
+    const projectRoot = path.join(root, "openux");
+    const result = await validateProject(projectRoot);
+    assert.deepEqual(result.errors, []);
+    assert.deepEqual(result.project.screens.map((screen) => screen.id), ["home"]);
+    assert.equal(result.assets.has("page-layout"), true);
+    const html = await fs.readFile(path.join(projectRoot, "assets", "page-layout", "asset.html"), "utf8");
+    assert.match(html, /data-openux-slot="content"/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("init refuses to overwrite existing project files", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "openux-init-test-"));
+  try {
+    const projectDirectory = path.join(root, "openux");
+    await fs.mkdir(projectDirectory);
+    const manifestPath = path.join(projectDirectory, "project.yml");
+    const originalManifest = "name: Existing project\n";
+    await fs.writeFile(manifestPath, originalManifest);
+
+    const initialized = spawnSync(process.execPath, [cliPath, "init", "--project", root], {
+      encoding: "utf8"
+    });
+    assert.equal(initialized.status, 1);
+    assert.match(initialized.stderr, /Cannot initialize OpenUX because these files already exist/);
+    assert.equal(await fs.readFile(manifestPath, "utf8"), originalManifest);
+    await assert.rejects(fs.access(path.join(projectDirectory, "theme", "theme.yml")));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("reports broken Screen asset references", async () => {
   const root = await createProject();
   try {

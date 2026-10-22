@@ -14,12 +14,25 @@ Run the commands as `openux ...` when the package's `bin` entry is available, or
 | `openux server status [--port <port>]` | Check whether the editor server is reachable and print JSON with its URL, connected browser count, and selection availability. |
 | `openux server selected [--port <port>]` | Print JSON containing the current browser-editor selection and the time it was last updated. |
 | `openux server update [--port <port>]` | Notify connected browser tabs after project files have changed. Tabs without unsaved edits refresh; tabs with unsaved edits are left untouched and prompted to save or reset before refreshing. |
+| `openux init [--project <directory>]` | Create a starter project under `<directory>/openux` (defaults to the current directory). Refuses to overwrite any generated file that already exists. |
 | `openux validate [--project <directory>]` | Validate project resources, asset bundles, local file references, and references between resources. |
 | `openux schema [project\|screen\|asset\|theme\|workflow]` | Print Markdown authoring guidance. Without a type, print all supported guidance. |
 | `openux render <screen> --format <html\|image> [--output <file>] [--project <directory>]` | Render a Screen by ID as HTML or a full-page image. |
 | `openux prune [--apply] [--project <directory>]` | Report unused assets and workflows. No files are removed unless `--apply` is supplied. |
 
 `--port` selects the local server port for `server` commands. The status, selection, and update commands default to port `3000` or the `OPENUX_PORT` / `PORT` environment setting.
+
+## Initialization
+
+Run `openux init` from the working directory where the `openux/` project folder should be created. Use `--project <directory>` to choose another working directory:
+
+```sh
+openux init
+openux validate
+openux server start
+```
+
+The command creates `project.yml`, a `home` Screen, a `page-layout` asset with a `content` slot, and a default Theme. It does not overwrite existing files; if any generated path already exists, initialization stops with an error.
 
 ## Rendering
 
