@@ -14,7 +14,7 @@ The manifest has these properties:
 | `screens` | list | Yes | Screen entries. |
 | `assets` | list | Yes | Asset entries. |
 | `theme` | string | Yes | Path to the Theme YAML file. |
-| `spec` | string | No | Path to the project's single OpenSpec-formatted behavior spec under `specs/`, relative to `openux/`. Use `specs/<lowercase-kebab-case-name>.md`. |
+| `spec` | string | No | Path to the project's single OpenSpec-formatted behavior spec under `specs/`, relative to `openux/`. Use `specs/<lowercase-kebab-case-name>.md`. Use only for requirements that apply across multiple Screens or throughout the project, not for one Screen's behavior. |
 
 Each Screen entry is a YAML mapping with these properties:
 
@@ -29,12 +29,12 @@ Each asset entry is a YAML mapping with these properties:
 |---|---|---:|---|
 | `id` | string | Yes | Asset identifier. Must start with a lowercase letter and contain only lowercase letters, numbers, or hyphens. Must match the `id` in the asset's `asset.yml`. |
 | `directory` | string | Yes | Path to the asset directory. |
-| `screen` | string | No | Owning Screen for a page-specific asset. Omit to make the asset shared and available to every Screen. |
+| `screen` | string | No | Owning Screen for a page-specific asset; set this to place the template under that Screen's asset list. Omit only for a template intentionally shared and available to every Screen. |
 | `copied-from` | string | No | ID of the page-specific asset this asset was copied from. Historical provenance; the source need not remain in the project. |
 
 All manifest paths are relative to the `openux/` directory containing `project.yml`. Use forward slashes. Do not use absolute paths, backslashes, empty path segments, `.` or `..` segments, or hidden path segments.
 
-Identifiers and paths must be unique within their respective lists. `screens` and `assets` must be YAML lists. `theme` must be a non-empty string. A page-specific asset may only be used by its owning Screen. Dragging one into another Screen creates a page-local copy and leaves the original in place; `copied-from` records that origin. Shared assets omit `screen` and may be used by every Screen. A project may define one project-wide behavior spec with `spec`; asset instances may separately link their own specific specs.
+Identifiers and paths must be unique within their respective lists. `screens` and `assets` must be YAML lists. `theme` must be a non-empty string. When creating templates for one Screen's unique content or layout, set `screen` to that Screen's ID so the templates appear under that Screen; do not add them to the shared library by default. Omit `screen` only for templates intentionally reusable across Screens. A page-specific asset may only be used by its owning Screen. Dragging one into another Screen creates a page-local copy and leaves the original in place; `copied-from` records that origin. Shared assets omit `screen` and may be used by every Screen. A project may define one project-wide behavior spec with `spec` for cross-Screen or project-wide requirements; behavior specific to a Screen belongs on its relevant asset instances, not on the Screen or asset template.
 
 ```yaml
 name: Example application

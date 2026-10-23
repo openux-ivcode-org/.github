@@ -146,6 +146,33 @@ test("validates asset-instance behavior spec paths and referenced files", async 
   }
 });
 
+test("rejects behavior specs on Screen files and asset templates", async () => {
+  const root = await createProject();
+  try {
+    const assetPath = path.join(root, "assets", "layout", "asset.yml");
+    const asset = YAML.parse(await fs.readFile(assetPath, "utf8"));
+    asset.spec = "specs/template-behavior.md";
+    await fs.writeFile(assetPath, YAML.stringify(asset));
+    let result = await validateProject(root);
+    assert.ok(result.errors.some((error) =>
+      error.includes("behavior specs cannot be attached to asset templates")
+    ));
+
+    delete asset.spec;
+    await fs.writeFile(assetPath, YAML.stringify(asset));
+    const screenPath = path.join(root, "screens", "home.yml");
+    const screen = YAML.parse(await fs.readFile(screenPath, "utf8"));
+    screen.spec = "specs/screen-behavior.md";
+    await fs.writeFile(screenPath, YAML.stringify(screen));
+    result = await validateProject(root);
+    assert.ok(result.errors.some((error) =>
+      error.includes("Screen-level behavior specs are not supported")
+    ));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("validates an optional project-level behavior spec", async () => {
   const root = await createProject();
   try {

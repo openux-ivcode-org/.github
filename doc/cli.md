@@ -47,7 +47,7 @@ openux render sign-in --format image --output sign-in.png
 
 ## Pruning
 
-Pruning is non-destructive by default: `openux prune` reports candidates without removing them. Applying the cleanup requires `--apply`. An asset is a candidate only when no Screen instance uses it, including instances nested in asset slots. Applying prune removes the candidate asset directory and its entry in `project.yml`. A project-wide behavior spec may be linked from `project.yml`; instance-specific specs are linked from Screen asset instances.
+Pruning is non-destructive by default: `openux prune` reports candidates without removing them. Applying the cleanup requires `--apply`. An asset is a candidate only when no Screen instance uses it, including instances nested in asset slots. Applying prune removes the candidate asset directory and its entry in `project.yml`. A project-level behavior spec is for requirements shared across Screens or throughout the project; Screen-specific behavior specs belong to the relevant asset instances, not to Screen files or asset templates.
 
 ## Intended workflow
 

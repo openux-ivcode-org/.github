@@ -1368,7 +1368,7 @@ function renderProjectOverview() {
   configuration.append(element(
     "p",
     "project-overview-config-note",
-    "OpenUX project files define the Screens, assets, Theme, and instance-linked behavior specs used by this Studio."
+    "Project-wide specs are for behavior shared across Screens; Screen-specific behavior belongs on its relevant asset instances, never on a Screen or asset template."
   ));
   sections.append(configuration);
   content.append(sections);
@@ -1959,6 +1959,7 @@ function mountAssetMarkup(root, markup, assetBase, instance, template) {
     const scopedStyle = document.createElement("style");
     scopedStyle.textContent = scopeCss(rewriteAssetCss(style.textContent, assetBase));
     root.append(scopedStyle);
+    style.remove();
   });
   if (themeStylesheet) {
     const style = document.createElement("style");
@@ -2143,7 +2144,7 @@ function renderProjectDetails(panel) {
   appendDetail(panel, "Behavior specs", specSources.size);
   appendDetail(panel, "Theme", theme?.name || "Not configured");
   appendDetail(panel, "Project manifest", "openux/project.yml");
-  appendSection(panel, "Project behavior spec");
+  appendSection(panel, "Project-wide behavior spec");
   const pendingDraft = [...createdSpecDrafts.entries()].find(([, draft]) => draft.owner === "project");
   const filePath = project.spec || pendingDraft?.[0];
   if (filePath) {
@@ -2151,7 +2152,7 @@ function renderProjectDetails(panel) {
     const openSpec = element(
       "button",
       "spec-action-button",
-      project.spec ? "Open project behavior spec" : "Open project behavior spec draft"
+      project.spec ? "Open project-wide behavior spec" : "Open project-wide behavior spec draft"
     );
     openSpec.type = "button";
     openSpec.addEventListener("click", () =>
@@ -2161,8 +2162,8 @@ function renderProjectDetails(panel) {
     );
     panel.append(openSpec);
   } else {
-    appendDetail(panel, "File", "No project behavior spec attached.");
-    const createSpec = element("button", "spec-action-button", "Create project behavior spec");
+    appendDetail(panel, "File", "No project-wide behavior spec attached.");
+    const createSpec = element("button", "spec-action-button", "Create project-wide behavior spec");
     createSpec.type = "button";
     createSpec.addEventListener("click", () =>
       createProjectSpec().catch((error) =>
@@ -2175,7 +2176,7 @@ function renderProjectDetails(panel) {
 
 function renderSpecDetails(panel) {
   if (activeSpecOwner === "project") {
-    appendSection(panel, "Project behavior spec");
+    appendSection(panel, "Project-wide behavior spec");
     appendDetail(panel, "File", activeSpecPath || "Unavailable");
     appendDetail(panel, "Project", project.name || "Untitled project");
     appendDetail(panel, "Format", "OpenSpec behavior contract; not executable.");

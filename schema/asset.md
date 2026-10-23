@@ -40,6 +40,8 @@ The asset directory is one multi-file definition. `asset.yml`, the rendering sou
 
 Asset IDs and slot IDs must start with a lowercase letter and contain only lowercase letters, numbers, or hyphens. Category segments must be non-empty.
 
+Behavior specs do not belong to asset templates. Do not add a `spec` property to `asset.yml`; link behavior specs to the relevant asset instances in a Screen file.
+
 ### `render` Properties
 
 | Property | Type | Required | Definition |

@@ -1,6 +1,6 @@
 # Behavior Spec File
 
-A behavior spec is a Markdown file referenced either by the optional `spec` property on the project manifest or by one asset instance in a Screen file. It is saved under `openux/specs/`; the path is relative to `openux/` and must use the form `specs/<lowercase-kebab-case-name>.md`.
+A behavior spec is a Markdown file referenced either by the optional `spec` property on the project manifest or by one asset instance in a Screen file. Instance-specific specs belong only to Screen asset instances, never to Screen mappings or asset-template definitions. A project-level spec is reserved for requirements that apply across multiple Screens or throughout the project; Screen-specific behavior belongs on the relevant asset instances. Specs are saved under `openux/specs/`; the path is relative to `openux/` and must use the form `specs/<lowercase-kebab-case-name>.md`.
 
 The project may reference one project-wide spec, and each asset instance may reference one instance-specific spec. Both use OpenSpec's structured behavior-spec format. Specs are declarative, testable guidance about observable behavior, not executable code or implementation plans.
 

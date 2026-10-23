@@ -15,6 +15,8 @@ The Screen file has these properties:
 
 The Screen ID is defined by the matching `screens[].id` in `project.yml`; do not add an `id` property to the Screen file.
 
+Screen-level behavior specs are not supported. Do not add a top-level `spec` property; attach each behavior spec to the relevant asset instance.
+
 ## Asset Instance Properties
 
 Each item in `assets` and each child in an instance's `slots` list is an asset instance mapping:
@@ -31,7 +33,7 @@ Each item in `assets` and each child in an instance's `slots` list is an asset i
 
 An empty `assets` list represents a new Screen waiting for its root layout. Drag a layout asset onto the empty Screen to set the root. Once a root is added, its template must declare at least one slot. Place child assets in the root layout's slots; do not add additional root items to `assets`. Attribute names, value types, and allowed slot IDs come from the referenced asset template. See [`asset.md`](asset.md) for the asset file schema.
 
-The optional `spec` property is one path, not a list. Each behavior spec describes intended behavior for that instance; it is Markdown guidance and is not executable. See [`spec.md`](spec.md) for its file conventions. Use the Screen and asset descriptions and notes for additional context.
+The optional `spec` property is one path, not a list. Each behavior spec describes intended behavior for that instance; it is Markdown guidance and is not executable. Create or update specs for instances whose behavior is specified by the user or project context. Do not create specs for purely visual instances or invent behavior. See [`spec.md`](spec.md) for its file conventions. Use the Screen and asset descriptions and notes for additional context.
 
 ## Example
 

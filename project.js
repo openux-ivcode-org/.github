@@ -198,6 +198,9 @@ async function validateProject(projectRoot) {
     const manifestPath = `${directory}/asset.yml`;
     const data = await readYaml(manifestPath);
     if (!data) continue;
+    if (Object.hasOwn(data, "spec")) {
+      errors.push(`${manifestPath}: behavior specs cannot be attached to asset templates; attach the spec to an asset instance in a Screen file.`);
+    }
     if (data.id !== entry.id) {
       errors.push(`${manifestPath}: id must match project.yml asset id "${entry.id}".`);
     }
@@ -239,6 +242,9 @@ async function validateProject(projectRoot) {
   }
 
   for (const screen of screens) {
+    if (Object.hasOwn(screen.data, "spec")) {
+      errors.push(`${screen.file}: Screen-level behavior specs are not supported; attach specs to the relevant asset instances.`);
+    }
     if (!Array.isArray(screen.data.assets)) {
       errors.push(`${screen.file}: Screen "${screen.id}" assets must be a list.`);
       continue;
