@@ -10,6 +10,7 @@ The manifest has these properties:
 |---|---|---:|---|
 | `name` | string | No | Project name. |
 | `description` | string | No | Project description. |
+| `openux` | string | Yes | OpenUX format version supported by the CLI. Use `0.1.0-SNAPSHOT` for the current pre-versioned format. |
 | `screens` | list | Yes | Screen entries. |
 | `assets` | list | Yes | Asset entries. |
 | `theme` | string | Yes | Path to the Theme YAML file. |
@@ -38,6 +39,7 @@ Identifiers and paths must be unique within their respective lists. `screens` an
 ```yaml
 name: Example application
 description: A sample OpenUX project.
+openux: "0.1.0-SNAPSHOT"
 screens:
   - id: sign-in
     file: screens/sign-in.yml

@@ -182,6 +182,9 @@ async function loadProject(selectionToRestore = null) {
   setPreviewMessage("loading", "Reading project files...");
   try {
     project = await loadYaml("project.yml");
+    if (typeof project.openux !== "string" || !project.openux) {
+      throw new Error("project.yml must specify the OpenUX version in openux.");
+    }
     if (!Array.isArray(project.screens) || !Array.isArray(project.assets)) {
       throw new Error("project.yml must list screens and assets.");
     }

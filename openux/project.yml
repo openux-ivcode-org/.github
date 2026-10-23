@@ -1,5 +1,6 @@
 name: OpenUX Example
 description: Example project for the OpenUX file-driven preview.
+openux: "0.1.0-SNAPSHOT"
 screens:
   - id: sign-in
     file: screens/sign-in.yml

@@ -6,7 +6,7 @@ const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const YAML = require("yaml");
 const { createServer } = require("./server");
-const { isWithin, resolveProjectPath, validateProject } = require("./project");
+const { OPENUX_VERSION, isWithin, resolveProjectPath, validateProject } = require("./project");
 
 const studioRoot = __dirname;
 const schemaFiles = new Map([
@@ -221,6 +221,7 @@ async function runInitCommand(args) {
   const files = [
     ["project.yml", YAML.stringify({
       name: "OpenUX Project",
+      openux: OPENUX_VERSION,
       screens: [{ id: "home", file: "screens/home.yml" }],
       assets: [{ id: "page-layout", directory: "assets/page-layout" }],
       theme: "theme/theme.yml"

@@ -6,7 +6,7 @@ const path = require("node:path");
 const test = require("node:test");
 const YAML = require("yaml");
 const { inlineProjectResources } = require("../cli");
-const { validateProject } = require("../project");
+const { OPENUX_VERSION, validateProject } = require("../project");
 const validation = require("../validation");
 
 const cliPath = path.join(__dirname, "..", "cli.js");
@@ -33,6 +33,7 @@ async function createProject() {
   const files = {
     "project.yml": [
       "name: Test project",
+      `openux: "${OPENUX_VERSION}"`,
       "screens:",
       "  - id: home",
       "    file: screens/home.yml",
@@ -317,10 +318,28 @@ test("init creates a valid starter project", async () => {
     const projectRoot = path.join(root, "openux");
     const result = await validateProject(projectRoot);
     assert.deepEqual(result.errors, []);
+    assert.equal(result.project.openux, OPENUX_VERSION);
     assert.deepEqual(result.project.screens.map((screen) => screen.id), ["home"]);
     assert.equal(result.assets.has("page-layout"), true);
     const html = await fs.readFile(path.join(projectRoot, "assets", "page-layout", "asset.html"), "utf8");
     assert.match(html, /data-openux-slot="content"/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("project validation requires the supported OpenUX version", async () => {
+  const root = await createProject();
+  try {
+    const projectPath = path.join(root, "project.yml");
+    const projectSource = await fs.readFile(projectPath, "utf8");
+    await fs.writeFile(projectPath, projectSource.replace(`openux: "${OPENUX_VERSION}"\n`, ""));
+    let result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes("openux must specify the OpenUX version")));
+
+    await fs.writeFile(projectPath, projectSource.replace(OPENUX_VERSION, "99.0.0"));
+    result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes(`expected "${OPENUX_VERSION}"`)));
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
