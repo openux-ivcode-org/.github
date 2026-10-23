@@ -51,8 +51,12 @@
       --ui-info-border: #cbd7ff;
       --ui-overview-bg: #f4f6fa;
       --ui-overview-border: #e3e8f0;
-      --ui-workflow-bg: #f7f8fb;
       --ui-canvas-glow: rgba(255, 255, 255, .9);
+      --studio-primary: var(--blue);
+      --studio-focus: var(--ui-primary-hover-border);
+      --studio-border: var(--ui-border-strong);
+      --studio-muted: var(--ui-text-soft);
+      --studio-on-primary: var(--ui-on-primary);
       font-family: Inter, "Segoe UI", Arial, sans-serif;
     }
 
@@ -102,7 +106,6 @@
         --ui-info-border: #40547a;
         --ui-overview-bg: #111b2c;
         --ui-overview-border: #35455f;
-        --ui-workflow-bg: #202f47;
         --ui-canvas-glow: rgba(112, 139, 196, .13);
       }
     }
@@ -166,7 +169,6 @@
     .workspace-context {
       display: flex;
       align-items: center;
-      gap: 14px;
       min-width: 0;
     }
 
@@ -192,8 +194,8 @@
       padding: 8px 12px;
       border: 1px solid var(--blue);
       border-radius: 7px;
-      color: var(--ui-on-primary);
-      background: var(--theme-primary, #4569e8);
+      color: var(--studio-on-primary);
+      background: var(--studio-primary);
       font-family: inherit;
       font-size: 11px;
       font-weight: 700;
@@ -201,9 +203,6 @@
     }
     .save-button:hover:not(:disabled) { border-color: var(--ui-primary-strong); background: var(--ui-primary-strong); }
     .save-button:disabled { border-color: var(--line); color: var(--ui-disabled-text); background: var(--ui-disabled-bg); cursor: default; }
-    .save-status { color: var(--ui-status); font-size: 11px; white-space: nowrap; }
-    .save-status.error { color: var(--ui-danger); }
-
     .workspace {
       height: calc(100vh - 66px);
       min-height: 0;
@@ -253,22 +252,63 @@
       background: var(--ui-primary-soft);
       font-weight: 700;
     }
+    .screen-nav-group { min-width: 0; }
+    .screen-nav-row { display: flex; align-items: center; gap: 3px; }
+    .screen-nav-row > .screen-option { flex: 1; min-width: 0; width: auto; }
+    .screen-option-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .screen-heading-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 14px 10px 9px;
+    }
+    .screen-heading-row .side-label { margin: 0; }
+    .screen-expand-button {
+      width: 32px;
+      height: 38px;
+      flex: none;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 8px;
+      color: var(--ui-text-soft);
+      background: transparent;
+      cursor: pointer;
+    }
+    .screen-expand-button::before {
+      width: 6px;
+      height: 6px;
+      border-right: 1.5px solid currentColor;
+      border-bottom: 1.5px solid currentColor;
+      content: "";
+      transform: rotate(-45deg);
+    }
+    .screen-expand-button[aria-expanded="true"]::before { transform: rotate(45deg); }
+    .screen-expand-button:hover { color: var(--ui-primary-strong); background: var(--ui-hover); }
+    .screen-expand-button:focus-visible {
+      outline: 2px solid var(--ui-primary-hover-border);
+      outline-offset: 2px;
+    }
+    .screen-assets { margin: 2px 0 5px 15px; padding-left: 7px; border-left: 1px solid var(--line); }
     button.side-item:focus-visible, button.asset-row:focus-visible {
       outline: 2px solid var(--ui-primary-hover-border);
       outline-offset: 2px;
     }
     .create-screen-button {
-      width: 100%;
-      margin-top: 6px;
-      padding: 8px 10px;
-      border: 1px dashed var(--ui-border-strong);
+      width: 28px;
+      height: 28px;
+      flex: none;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      border: 1px solid var(--ui-border-strong);
       border-radius: 7px;
       color: var(--ui-text-medium);
       background: var(--panel);
       font-family: inherit;
-      font-size: 12px;
-      font-weight: 650;
-      text-align: left;
+      font-size: 18px;
+      font-weight: 500;
+      line-height: 1;
       cursor: pointer;
     }
     .create-screen-button:hover:not(:disabled) { border-color: var(--ui-primary-hover-border); color: var(--ui-primary-strong); background: var(--ui-primary-soft-bg); }
@@ -396,23 +436,6 @@
       white-space: nowrap;
     }
 
-    .canvas-meta {
-      display: flex;
-      flex: none;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .meta-chip {
-      padding: 5px 8px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      color: var(--ui-status);
-      background: var(--ui-soft-bg);
-      font-size: 10px;
-      white-space: nowrap;
-    }
-
     .stage {
       min-height: 0;
       flex: 1;
@@ -437,8 +460,7 @@
       align-content: start;
       gap: 16px;
     }
-    .canvas.asset-editing > .review-card,
-    .canvas.asset-editing > .workflow-output { grid-column: 1 / -1; width: 100%; }
+    .canvas.asset-editing > .editor-message { grid-column: 1 / -1; width: 100%; }
     .canvas.asset-editing > .stage {
       min-width: 0;
       min-height: 600px;
@@ -489,51 +511,56 @@
     }
     .asset-yaml-status.error { color: var(--ui-danger); }
 
-    .canvas.workflow-editing {
+    .canvas.spec-editing {
       height: 100%;
       min-height: 0;
       display: grid;
       grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: minmax(220px, 1fr) minmax(0, 2fr);
+      grid-template-rows: minmax(220px, 1fr) minmax(240px, 1.5fr) auto;
       align-content: stretch;
       gap: 16px;
       overflow: hidden;
     }
-    .canvas.workflow-editing > .review-card,
-    .canvas.workflow-editing > .workflow-output { display: none; }
-    .canvas.workflow-editing > .stage {
+    .canvas.spec-editing > .stage {
       min-width: 0;
       min-height: 0;
       height: 100%;
       grid-column: 1;
-      grid-row: 2;
+      grid-row: 1;
       padding: 12px;
       border: 1px solid var(--line);
       border-radius: 14px;
       background: var(--panel);
       overflow: hidden;
     }
-    .workflow-yaml-editor-panel {
+    .canvas.spec-editing > .editor-message {
+      grid-column: 1;
+      grid-row: 3;
+      width: 100%;
+      margin: 0;
+    }
+    .spec-editor-panel {
       min-width: 0;
       min-height: 0;
       height: 100%;
       display: flex;
       grid-column: 1;
-      grid-row: 1;
+      grid-row: 2;
       flex-direction: column;
       padding: 16px;
       border: 1px solid var(--line);
       border-radius: 14px;
       background: var(--panel);
     }
-    .workflow-yaml-editor-panel[hidden] { display: none; }
-    .workflow-yaml-editor-heading {
+    .spec-editor-panel[hidden] { display: none; }
+    .spec-editor-heading {
       margin: 0 0 12px;
       color: var(--ui-text-medium);
       font-size: 12px;
       font-weight: 700;
+      overflow-wrap: anywhere;
     }
-    .workflow-yaml-source {
+    .spec-source {
       width: 100%;
       min-height: 0;
       flex: 1;
@@ -547,95 +574,30 @@
       tab-size: 2;
       white-space: pre;
     }
-    .workflow-yaml-source:focus { outline: 2px solid var(--ui-primary-hover-border); }
-    .workflow-yaml-status {
+    .spec-source:focus { outline: 2px solid var(--ui-primary-hover-border); }
+    .spec-status {
       min-height: 18px;
       margin-top: 8px;
       color: var(--ui-status);
       font-size: 11px;
       line-height: 1.4;
     }
-    .workflow-yaml-status.error { color: var(--ui-danger); }
-    .workflow-preview {
-      display: flex;
-      height: 100%;
-      min-height: 0;
-      flex-direction: column;
-      padding: 16px;
-      overflow: hidden;
-      background: var(--ui-workflow-bg);
-    }
-    .workflow-diagram-scroll { width: 100%; min-height: 0; flex: 1; overflow: hidden; }
-    .workflow-diagram { position: relative; margin: 0 auto; transform-origin: top left; }
-    .workflow-diagram-edges { position: absolute; inset: 0; overflow: visible; }
-    .workflow-edge { fill: none; stroke: var(--ui-primary-hover-border); stroke-width: 2; }
-    .workflow-edge:not(.selected) { opacity: .55; }
-    .workflow-edge.selected { stroke: var(--blue); stroke-width: 3; }
-    .workflow-edge-arrow { fill: var(--ui-primary-hover-border); }
-    .workflow-edge-arrow-selected { fill: var(--blue); }
-    .workflow-edge-label {
-      fill: var(--ui-text-medium);
-      font: 11px Inter, "Segoe UI", Arial, sans-serif;
-      paint-order: stroke;
-      stroke: var(--ui-workflow-bg);
-      stroke-width: 5px;
-      stroke-linejoin: round;
-    }
-    .workflow-edge-label:not(.selected) { opacity: .6; }
-    .workflow-edge-label.selected { fill: var(--ui-primary-strong); font-weight: 700; }
-    .workflow-diagram-node {
-      position: absolute;
-      z-index: 1;
-      display: flex;
-      min-height: 112px;
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 8px;
-      padding: 14px;
-      border: 1px solid var(--ui-border-strong);
-      border-radius: 10px;
-      color: var(--ui-text-strong);
-      background: var(--panel);
-      text-align: left;
-      box-shadow: 0 5px 16px rgba(25, 38, 65, .08);
-    }
-    button.workflow-diagram-node { cursor: pointer; font-family: inherit; }
-    button.workflow-diagram-node:hover { border-color: var(--ui-primary-hover-border); }
-    button.workflow-diagram-node:focus-visible { outline: 2px solid var(--ui-primary-hover-border); }
-    .workflow-step-node.selected { border-color: var(--blue); box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 18%, transparent); }
-    .workflow-node-entry, .workflow-node-kind {
-      color: var(--ui-primary-strong);
-      font-size: 9px;
-      font-weight: 800;
-      letter-spacing: .08em;
-    }
-    .workflow-node-title {
-      display: -webkit-box;
-      overflow: hidden;
-      -webkit-box-orient: vertical;
-      -webkit-line-clamp: 3;
-      font-size: 13px;
-      overflow-wrap: anywhere;
-    }
-    .workflow-node-description {
-      display: -webkit-box;
-      overflow: hidden;
-      -webkit-box-orient: vertical;
-      -webkit-line-clamp: 3;
-      color: var(--muted);
+    .spec-status.error { color: var(--ui-danger); }
+    .spec-action-button {
+      width: 100%;
+      margin-top: 8px;
+      padding: 8px 10px;
+      border: 1px solid var(--studio-border);
+      border-radius: 7px;
+      color: var(--studio-primary);
+      background: var(--ui-primary-soft-bg);
+      font: inherit;
       font-size: 11px;
-      line-height: 1.45;
-      overflow-wrap: anywhere;
+      font-weight: 650;
+      cursor: pointer;
     }
-    .workflow-node-transition-count { margin-top: auto; color: var(--ui-text-soft); font-size: 10px; }
-    .workflow-screen-node { border-color: var(--ui-success-border); }
-    .workflow-result-node { border-color: var(--ui-info-border); }
-    .workflow-diagram-error {
-      padding: 18px;
-      color: var(--ui-danger);
-      font-size: 12px;
-      line-height: 1.5;
-    }
+    .spec-action-button:hover { border-color: var(--studio-focus); }
+    .spec-action-button:focus-visible { outline: 2px solid var(--studio-focus); outline-offset: 2px; }
 
     .screen-preview {
       width: 100%;
@@ -653,6 +615,15 @@
       place-items: center;
       padding: 32px;
       color: var(--muted);
+      text-align: center;
+    }
+    .empty-screen-drop-zone {
+      display: grid;
+      min-height: 55vh;
+      place-items: center;
+      border: 1px dashed var(--studio-border);
+      border-radius: 12px;
+      color: var(--studio-muted);
       text-align: center;
     }
 
@@ -757,25 +728,6 @@
       font-weight: 650;
       overflow-wrap: anywhere;
     }
-    .project-overview-workflow-list { display: grid; gap: 7px; margin-top: 7px; }
-    .project-overview-workflow {
-      display: flex;
-      width: 100%;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 8px 9px;
-      border: 0;
-      border-radius: 6px;
-      color: inherit;
-      background: var(--ui-workflow-bg);
-      font-size: 11px;
-      text-align: left;
-      cursor: pointer;
-    }
-    .project-overview-workflow:hover { outline: 1px solid var(--ui-primary-hover-border); }
-    .project-overview-workflow:focus-visible { outline: 2px solid var(--ui-primary-hover-border); }
-    .project-overview-workflow-name { color: var(--ui-text-strong); font-weight: 650; }
-    .project-overview-workflow-id { color: var(--muted); overflow-wrap: anywhere; }
     .project-overview-config-note { margin: 4px 0 0; }
 
     .asset-instance {
@@ -787,10 +739,10 @@
       cursor: pointer;
     }
 
-    .asset-instance:hover { border-color: var(--theme-border, #dce3f5); }
+    .asset-instance:hover { border-color: var(--studio-border); }
     .asset-instance.selected {
-      border-color: var(--theme-focus, #8ba0f1);
-      background: color-mix(in srgb, var(--theme-primary, #4569e8) 4%, transparent);
+      border-color: var(--studio-focus);
+      background: color-mix(in srgb, var(--studio-primary) 4%, transparent);
     }
     .asset-instance:last-child { margin-bottom: 0; }
     .asset-instance.dragging { opacity: .45; }
@@ -806,12 +758,12 @@
     }
     .asset-instance.drop-before::before { top: -3px; }
     .asset-instance.drop-after::after { bottom: -3px; }
-    .asset-instance:focus-visible { outline: 2px solid var(--theme-focus, #8297ec); outline-offset: 2px; }
+    .asset-instance:focus-visible { outline: 2px solid var(--studio-focus); outline-offset: 2px; }
 
     .asset-instance-label {
       display: block;
       margin: 0 0 7px;
-      color: var(--theme-muted, #8994a7);
+      color: var(--studio-muted);
       font-size: 10px;
       font-weight: 650;
       letter-spacing: .02em;
@@ -820,7 +772,7 @@
     .asset-instance-shell { display: block; }
     .asset-instance-shell > * { display: block; }
 
-    .workflow-output {
+    .editor-message {
       display: none;
       max-width: 520px;
       margin: 16px auto 0;
@@ -833,8 +785,8 @@
       line-height: 1.5;
     }
 
-    .workflow-output.visible { display: block; }
-    .workflow-output strong { display: block; margin-bottom: 4px; }
+    .editor-message.visible { display: block; }
+    .editor-message strong { display: block; margin-bottom: 4px; }
 
     .loading-message, .error-message { color: var(--ui-status); line-height: 1.6; }
     .error-message { color: var(--ui-danger); }
@@ -876,24 +828,6 @@
       font-weight: 700;
     }
 
-    .review-card {
-      display: flex;
-      gap: 10px;
-      margin: 20px auto 0;
-      padding: 12px 14px;
-      max-width: 520px;
-      border: 1px solid var(--ui-success-border);
-      border-radius: 9px;
-      color: var(--ui-success);
-      background: var(--ui-success-bg);
-      font-size: 11px;
-      line-height: 1.5;
-    }
-    .review-card[hidden] { display: none; }
-
-    .review-check { font-weight: 800; }
-    .review-card strong { display: block; color: var(--ui-success-strong); font-size: 11px; }
-
     @media (max-width: 800px) {
       .canvas.asset-editing { grid-template-columns: minmax(0, 1fr); }
       .canvas.asset-editing > .stage,
@@ -905,14 +839,14 @@
       .canvas.asset-editing > .stage { min-height: 520px; }
       .asset-html-editor-panel, .asset-yaml-editor-panel { min-height: 360px; }
       .asset-html-source, .asset-yaml-source { min-height: 280px; }
-      .canvas.workflow-editing {
+      .canvas.spec-editing {
         grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: minmax(180px, 1fr) minmax(0, 2fr);
+        grid-template-rows: minmax(180px, 1fr) minmax(220px, 1fr) auto;
       }
-      .canvas.workflow-editing > .stage,
-      .canvas.workflow-editing > .workflow-yaml-editor-panel { grid-column: 1; }
-      .canvas.workflow-editing > .workflow-yaml-editor-panel { grid-row: 1; }
-      .canvas.workflow-editing > .stage { grid-row: 2; }
+      .canvas.spec-editing > .stage,
+      .canvas.spec-editing > .spec-editor-panel { grid-column: 1; }
+      .canvas.spec-editing > .stage { grid-row: 1; }
+      .canvas.spec-editing > .spec-editor-panel { grid-row: 2; }
     }
 
     .panel-heading {
@@ -1173,7 +1107,6 @@
     @media (max-width: 1120px) {
       .workspace { grid-template-columns: 210px minmax(400px, 1fr); }
       .inspector { display: none; }
-      .canvas-meta { display: none; }
     }
 
     @media (max-width: 720px) {
@@ -1184,13 +1117,12 @@
       .workspace-context .eyebrow { display: none; }
       h1 { max-width: 150px; font-size: 14px; }
       .topbar-spacer { display: none; }
-      .save-status { display: none; }
       .reset-button { padding: 6px 7px; }
       .save-button { padding: 7px 8px; }
       .workspace { height: auto; min-height: calc(100vh - 58px); display: block; }
       .sidebar { display: none; }
       .canvas { min-height: calc(100vh - 58px); padding: 20px 12px; }
-      .canvas.workflow-editing { height: calc(100vh - 58px); min-height: 640px; }
+      .canvas.spec-editing { height: calc(100vh - 58px); min-height: 640px; }
       .stage { min-height: 70vh; flex: none; }
       .screen-preview { min-height: 70vh; }
       .form-content { padding: 35px 26px 28px; }
@@ -1210,8 +1142,7 @@
     body.render-only .topbar,
     body.render-only .sidebar,
     body.render-only .inspector,
-    body.render-only .review-card,
-    body.render-only .workflow-output,
+    body.render-only .editor-message,
     body.render-only .asset-context-menu,
     body.render-only .asset-delete-dialog { display: none !important; }
     body.render-only .workspace { display: block; width: 100%; height: 100vh; }
@@ -1229,14 +1160,9 @@
         <div class="eyebrow" id="breadcrumb">Screens</div>
         <h1 id="screen-heading">Loading project...</h1>
       </div>
-      <div class="canvas-meta">
-        <span class="meta-chip">Desktop preview</span>
-        <span class="meta-chip" id="theme-chip">Loading theme...</span>
-      </div>
     </div>
     <div class="topbar-spacer"></div>
-    <button class="save-button" id="save-project" type="button" disabled>Save changes</button>
-    <span class="save-status" id="save-status" role="status" aria-live="polite">Loading project...</span>
+    <button class="save-button" id="save-project" type="button" disabled>Save</button>
     <button class="reset-button" id="reset-project" type="button">Reset from files</button>
   </header>
 
@@ -1252,13 +1178,12 @@
         <span class="side-icon">T</span><span id="theme-name">Loading theme...</span>
       </button>
 
-      <div class="side-label">Screens</div>
+      <div class="screen-heading-row">
+        <div class="side-label">Screens</div>
+        <button class="create-screen-button" id="create-screen" type="button" aria-label="Create new Screen" title="Create an empty Screen" disabled>+</button>
+      </div>
       <div id="screen-nav"></div>
-      <button class="create-screen-button" id="create-screen" type="button" disabled>+ New Screen</button>
-      <div class="side-label">Workflows</div>
-      <div id="workflow-nav"></div>
-      <div class="side-label" style="margin-top:26px">Asset library</div>
-      <div class="asset-hint">Click an asset to edit its template; drag it onto the Screen or into a named slot to place it.</div>
+      <div class="side-label" id="asset-library-label" style="margin-top:26px">Asset library</div>
       <div id="asset-nav" class="asset-library"></div>
     </aside>
 
@@ -1269,10 +1194,10 @@
         </article>
       </section>
 
-      <section class="workflow-yaml-editor-panel" id="workflow-yaml-editor-panel" aria-label="Workflow YAML editor" hidden>
-        <h2 class="workflow-yaml-editor-heading">Workflow YAML</h2>
-        <textarea class="workflow-yaml-source" id="workflow-yaml-source" aria-label="Workflow YAML source" spellcheck="false"></textarea>
-        <div class="workflow-yaml-status" id="workflow-yaml-status" role="status" aria-live="polite"></div>
+      <section class="spec-editor-panel" id="spec-editor-panel" aria-label="Behavior spec Markdown editor" hidden>
+        <h2 class="spec-editor-heading" id="spec-editor-heading">Behavior spec</h2>
+        <textarea class="spec-source" id="spec-source" aria-label="Behavior spec Markdown source" spellcheck="false"></textarea>
+        <div class="spec-status" id="spec-status" role="status" aria-live="polite"></div>
       </section>
 
       <section class="asset-html-editor-panel" id="asset-html-editor-panel" aria-label="Asset HTML editor" hidden>
@@ -1286,8 +1211,7 @@
         <div class="asset-yaml-status" id="asset-yaml-status" role="status" aria-live="polite"></div>
       </section>
 
-      <div class="review-card" id="review-card" aria-live="polite"></div>
-      <div class="workflow-output" id="workflow-output" role="status" aria-live="polite"></div>
+      <div class="editor-message" id="editor-message" role="status" aria-live="polite"></div>
     </main>
 
     <aside class="inspector" aria-label="Selected item details">

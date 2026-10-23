@@ -13,7 +13,7 @@ The manifest has these properties:
 | `screens` | list | Yes | Screen entries. |
 | `assets` | list | Yes | Asset entries. |
 | `theme` | string | Yes | Path to the Theme YAML file. |
-| `workflows` | list | No | Workflow entries. Omit this property when the project has no Workflows. |
+| `spec` | string | No | Path to the project's single OpenSpec-formatted behavior spec under `specs/`, relative to `openux/`. Use `specs/<lowercase-kebab-case-name>.md`. |
 
 Each Screen entry is a YAML mapping with these properties:
 
@@ -28,17 +28,12 @@ Each asset entry is a YAML mapping with these properties:
 |---|---|---:|---|
 | `id` | string | Yes | Asset identifier. Must start with a lowercase letter and contain only lowercase letters, numbers, or hyphens. Must match the `id` in the asset's `asset.yml`. |
 | `directory` | string | Yes | Path to the asset directory. |
-
-Each Workflow entry is a YAML mapping with these properties:
-
-| Property | Type | Required | Definition |
-|---|---|---:|---|
-| `id` | string | Yes | Workflow identifier. Must start with a lowercase letter and contain only lowercase letters, numbers, or hyphens. |
-| `file` | string | Yes | Path to the Workflow YAML file. |
+| `screen` | string | No | Owning Screen for a page-specific asset. Omit to make the asset shared and available to every Screen. |
+| `copied-from` | string | No | ID of the page-specific asset this asset was copied from. Historical provenance; the source need not remain in the project. |
 
 All manifest paths are relative to the `openux/` directory containing `project.yml`. Use forward slashes. Do not use absolute paths, backslashes, empty path segments, `.` or `..` segments, or hidden path segments.
 
-Identifiers and paths must be unique within their respective lists. `screens`, `assets`, and `workflows`, when present, must be YAML lists. `theme` must be a non-empty string.
+Identifiers and paths must be unique within their respective lists. `screens` and `assets` must be YAML lists. `theme` must be a non-empty string. A page-specific asset may only be used by its owning Screen. Dragging one into another Screen creates a page-local copy and leaves the original in place; `copied-from` records that origin. Shared assets omit `screen` and may be used by every Screen. A project may define one project-wide behavior spec with `spec`; asset instances may separately link their own specific specs.
 
 ```yaml
 name: Example application
@@ -49,8 +44,7 @@ screens:
 assets:
   - id: sign-in-layout
     directory: assets/sign-in-layout
+    screen: sign-in
 theme: theme/theme.yml
-workflows:
-  - id: sign-in
-    file: workflows/sign-in.yml
+spec: specs/project-behavior.md
 ```

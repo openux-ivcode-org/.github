@@ -11,7 +11,7 @@ The Screen file has these properties:
 | `name` | string | Yes | Human-readable Screen name. |
 | `description` | string | Yes | Description of the Screen. |
 | `note` | string | No | Implementation guidance for the Screen. |
-| `assets` | list | Yes | Exactly one root asset instance that defines the Screen layout. |
+| `assets` | list | Yes | Zero or one root asset instance. An empty list is allowed while building the Screen; when populated, the root instance must define the layout. |
 
 The Screen ID is defined by the matching `screens[].id` in `project.yml`; do not add an `id` property to the Screen file.
 
@@ -25,27 +25,13 @@ Each item in `assets` and each child in an instance's `slots` list is an asset i
 | `name` | string | No | Name for this use of the asset. |
 | `description` | string | No | Description of this use of the asset. |
 | `note` | string | No | Implementation guidance for this instance. |
+| `spec` | string | No | Path to this instance's single Markdown behavior spec under `specs/`, relative to `openux/`. Use `specs/<lowercase-kebab-case-name>.md`. |
 | `attributes` | mapping | No | Instance values for attributes the asset template marks `overridable: true`. |
 | `slots` | mapping | No | Child asset lists keyed by slot IDs declared by the asset template. Each value is a list of asset instances. |
-| `interactions` | list | No | Event/action mappings for this instance. |
 
-The root asset template must declare at least one slot. Place child assets in the root layout's slots; do not add additional root items to `assets`. Attribute names, value types, and allowed slot IDs come from the referenced asset template. See [`asset.md`](asset.md) for the asset file schema.
+An empty `assets` list represents a new Screen waiting for its root layout. Drag a layout asset onto the empty Screen to set the root. Once a root is added, its template must declare at least one slot. Place child assets in the root layout's slots; do not add additional root items to `assets`. Attribute names, value types, and allowed slot IDs come from the referenced asset template. See [`asset.md`](asset.md) for the asset file schema.
 
-## Interaction Properties
-
-Each item in `interactions` is a mapping:
-
-| Property | Type | Required | Definition |
-|---|---|---:|---|
-| `event` | string | Yes | Set to `click`, the only supported event. |
-| `action` | mapping | No | Action associated with the event. When present, it must use the supported action properties below. |
-
-The current supported action is:
-
-| Property | Type | Required | Definition |
-|---|---|---:|---|
-| `type` | string | Yes | Set to `invoke-workflow`. |
-| `workflow` | string | Yes | ID of a Workflow listed in `project.yml`. |
+The optional `spec` property is one path, not a list. Each behavior spec describes intended behavior for that instance; it is Markdown guidance and is not executable. See [`spec.md`](spec.md) for its file conventions. Use the Screen and asset descriptions and notes for additional context.
 
 ## Example
 
@@ -68,9 +54,5 @@ assets:
           name: Sign-in button
           attributes:
             label: Sign in
-          interactions:
-            - event: click
-              action:
-                type: invoke-workflow
-                workflow: login
+          spec: specs/sign-in-button.md
 ```

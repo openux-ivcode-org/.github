@@ -12,7 +12,7 @@ A single view of a user interface. A screen defines the interface presented to t
 
 ### Asset
 
-A user interface element contained within a screen or another asset. Examples include buttons, text fields, menus, dialogs, and tables. Assets may define properties and presentation states, and may expose zero or more interactions.
+A user interface element contained within a screen or another asset. Examples include buttons, text fields, menus, dialogs, and tables. Assets may define properties and presentation states; behavior for a specific use may be described by an attached Behavior Spec.
 
 ### Asset Template
 
@@ -26,9 +26,9 @@ A specific use of an asset template, included in a screen and carrying detailed 
 
 A project-level set of visual properties applied across all screens, such as colors, typography, and spacing.
 
-### Workflow
+### Behavior Spec
 
-A reusable graph of steps and outcomes that describes behavior initiated by an interaction, including transitions between Screens. The proposed YAML representation is documented in `workflow.md`.
+A Markdown file linked through the optional `spec` property on the project manifest or an asset instance. It uses OpenSpec's structured requirement-and-scenario format to define observable behavior; it is not executable or an implementation plan.
 
 ### State
 
@@ -48,17 +48,17 @@ An identifiable occurrence that may trigger behavior, such as a user interaction
 
 ### Action
 
-An operation performed in response to an event or workflow step. An action may update state, validate input, display feedback, invoke a workflow, or navigate to another screen.
+An operation performed in response to an event or specified behavior. An action may update state, validate input, display feedback, or navigate to another screen.
 
 ### Requirement
 
-A statement describing a condition, capability, or behavior that the software is expected to satisfy. Requirements may be linked to screens, assets, workflows, and verification scenarios.
+A statement describing a condition, capability, or behavior that the software is expected to satisfy. Requirements may be linked to screens, assets, behavior specs, and verification scenarios.
 
 ## Specification and Change Management
 
 ### Artifact
 
-A structured piece of information defined by the OpenUX standard, such as a screen, asset template, asset instance, theme, workflow, requirement, or change definition.
+A structured piece of information defined by the OpenUX standard, such as a screen, asset template, asset instance, theme, behavior spec, requirement, or change definition.
 
 ### Project
 
@@ -86,7 +86,7 @@ A tool that loads, presents, and modifies OpenUX artifacts while preserving thei
 
 ### Traceability
 
-Explicit relationships between artifacts, such as links connecting requirements to workflows, screens, and expected outcomes.
+Explicit relationships between artifacts, such as links connecting requirements to behavior specs, screens, and expected outcomes.
 
 ### Archive
 

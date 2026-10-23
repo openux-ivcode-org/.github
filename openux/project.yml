@@ -6,53 +6,61 @@ screens:
   - id: home
     file: screens/home.yml
 assets:
-  - id: centered-form-layout
-    directory: assets/centered-form-layout
   - id: sign-in-layout
     directory: assets/sign-in-layout
+    screen: sign-in
   - id: sign-in-brand
     directory: assets/sign-in-brand
+    screen: sign-in
   - id: sign-in-story
     directory: assets/sign-in-story
+    screen: sign-in
   - id: sign-in-snapshot
     directory: assets/sign-in-snapshot
+    screen: sign-in
   - id: sign-in-trust
     directory: assets/sign-in-trust
+    screen: sign-in
   - id: sign-in-heading
     directory: assets/sign-in-heading
+    screen: sign-in
   - id: sign-in-field-visual
     directory: assets/sign-in-field-visual
+    screen: sign-in
   - id: sign-in-options-visual
     directory: assets/sign-in-options-visual
+    screen: sign-in
   - id: sign-in-action-visual
     directory: assets/sign-in-action-visual
+    screen: sign-in
   - id: sign-in-divider
     directory: assets/sign-in-divider
+    screen: sign-in
   - id: sign-in-disclaimer
     directory: assets/sign-in-disclaimer
-  - id: text-field
-    directory: assets/text-field
-  - id: button
-    directory: assets/button
-  - id: rich-text-editor
-    directory: assets/rich-text-editor
+    screen: sign-in
   - id: dashboard-layout
     directory: assets/dashboard-layout
+    screen: home
   - id: dashboard-overview
     directory: assets/dashboard-overview
+    screen: home
   - id: dashboard-header
     directory: assets/dashboard-header
+    screen: home
   - id: dashboard-navigation
     directory: assets/dashboard-navigation
+    screen: home
   - id: dashboard-welcome
     directory: assets/dashboard-welcome
+    screen: home
   - id: dashboard-metric
     directory: assets/dashboard-metric
+    screen: home
   - id: dashboard-activity
     directory: assets/dashboard-activity
+    screen: home
   - id: dashboard-insights
     directory: assets/dashboard-insights
+    screen: home
 theme: theme/theme.yml
-workflows:
-  - id: login
-    file: workflows/login.yml

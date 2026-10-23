@@ -7,8 +7,26 @@ const test = require("node:test");
 const YAML = require("yaml");
 const { inlineProjectResources } = require("../cli");
 const { validateProject } = require("../project");
+const validation = require("../validation");
 
 const cliPath = path.join(__dirname, "..", "cli.js");
+const validSpec = [
+  "# Layout behavior",
+  "",
+  "## Purpose",
+  "Describe the behavior of the layout asset.",
+  "",
+  "## Requirements",
+  "",
+  "### Requirement: Place content",
+  "The layout SHALL display child content in its declared content slot.",
+  "",
+  "#### Scenario: Content is present",
+  "- **GIVEN** child content is assigned to the slot",
+  "- **WHEN** the layout is rendered",
+  "- **THEN** the content appears in the content area.",
+  ""
+].join("\n");
 
 async function createProject() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "openux-project-test-"));
@@ -24,9 +42,6 @@ async function createProject() {
       "  - id: unused",
       "    directory: assets/unused",
       "theme: theme/theme.yml",
-      "workflows:",
-      "  - id: orphan",
-      "    file: workflows/orphan.yml",
       ""
     ].join("\n"),
     "screens/home.yml": [
@@ -34,6 +49,7 @@ async function createProject() {
       "description: Test screen",
       "assets:",
       "  - asset-template: layout",
+      "    spec: specs/layout-behavior.md",
       "    slots:",
       "      content: []",
       ""
@@ -66,17 +82,7 @@ async function createProject() {
       ""
     ].join("\n"),
     "theme/theme.css": ":root { color-scheme: light; }\n",
-    "workflows/orphan.yml": [
-      "id: orphan",
-      "name: Unused workflow",
-      "entry: begin",
-      "steps:",
-      "  - id: begin",
-      "    transitions:",
-      "      - when: completed",
-      "        result: Done",
-      ""
-    ].join("\n")
+    "specs/layout-behavior.md": validSpec
   };
   for (const [relativePath, content] of Object.entries(files)) {
     const target = path.join(root, ...relativePath.split("/"));
@@ -93,6 +99,208 @@ test("validates a complete OpenUX project and its asset bundle", async () => {
     assert.deepEqual(result.errors, []);
     assert.equal(result.usedAssetIds.has("layout"), true);
     assert.equal(result.usedAssetIds.has("unused"), false);
+    assert.deepEqual([...result.referencedSpecPaths], ["specs/layout-behavior.md"]);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("allows a Screen to remain empty while being built", async () => {
+  const root = await createProject();
+  try {
+    const screenPath = path.join(root, "screens", "home.yml");
+    const screen = YAML.parse(await fs.readFile(screenPath, "utf8"));
+    screen.assets = [];
+    await fs.writeFile(screenPath, YAML.stringify(screen));
+
+    const result = await validateProject(root);
+    assert.deepEqual(result.errors, []);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("validates asset-instance behavior spec paths and referenced files", async () => {
+  const root = await createProject();
+  try {
+    const screenPath = path.join(root, "screens", "home.yml");
+    const screen = YAML.parse(await fs.readFile(screenPath, "utf8"));
+
+    screen.assets[0].spec = ["specs/layout-behavior.md"];
+    await fs.writeFile(screenPath, YAML.stringify(screen));
+    let result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes("Behavior spec path must be")));
+
+    screen.assets[0].spec = "specs/missing.md";
+    await fs.writeFile(screenPath, YAML.stringify(screen));
+    result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes('Behavior spec "specs/missing.md"')));
+
+    screen.assets[0].spec = "notes.md";
+    await fs.writeFile(screenPath, YAML.stringify(screen));
+    result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes("specs/<name>.md")));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("validates an optional project-level behavior spec", async () => {
+  const root = await createProject();
+  try {
+    const manifestPath = path.join(root, "project.yml");
+    const manifest = YAML.parse(await fs.readFile(manifestPath, "utf8"));
+    manifest.spec = "specs/project-behavior.md";
+    await fs.writeFile(manifestPath, YAML.stringify(manifest));
+    await fs.writeFile(path.join(root, "specs", "project-behavior.md"), validSpec);
+
+    let result = await validateProject(root);
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.referencedSpecPaths.has("specs/project-behavior.md"), true);
+
+    manifest.spec = ["specs/project-behavior.md"];
+    await fs.writeFile(manifestPath, YAML.stringify(manifest));
+    result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes("project.yml spec")));
+    assert.ok(result.errors.some((error) => error.includes("Behavior spec path must be")));
+
+    manifest.spec = "project.md";
+    await fs.writeFile(manifestPath, YAML.stringify(manifest));
+    result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes("project.yml spec")));
+
+    manifest.spec = "specs/missing-project-spec.md";
+    await fs.writeFile(manifestPath, YAML.stringify(manifest));
+    result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes('Behavior spec "specs/missing-project-spec.md"')));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("validates page-specific asset organization and usage", async () => {
+  const root = await createProject();
+  try {
+    const manifestPath = path.join(root, "project.yml");
+    const manifest = YAML.parse(await fs.readFile(manifestPath, "utf8"));
+    const localAsset = manifest.assets.find((entry) => entry.id === "unused");
+    localAsset.screen = "home";
+    manifest.screens.push({ id: "settings", file: "screens/settings.yml" });
+    await fs.writeFile(manifestPath, YAML.stringify(manifest));
+
+    const homePath = path.join(root, "screens", "home.yml");
+    const home = YAML.parse(await fs.readFile(homePath, "utf8"));
+    home.assets[0].slots.content.push({ "asset-template": "unused" });
+    await fs.writeFile(homePath, YAML.stringify(home));
+
+    const settings = {
+      name: "Settings",
+      description: "Settings screen",
+      assets: [{
+        "asset-template": "layout",
+        slots: { content: [] }
+      }]
+    };
+    const settingsPath = path.join(root, "screens", "settings.yml");
+    await fs.writeFile(settingsPath, YAML.stringify(settings));
+
+    let result = await validateProject(root);
+    assert.deepEqual(result.errors, []);
+
+    settings.assets[0].slots.content.push({ "asset-template": "unused" });
+    await fs.writeFile(settingsPath, YAML.stringify(settings));
+    result = await validateProject(root);
+    assert.ok(result.errors.some((error) =>
+      error.includes('asset "unused" belongs to Screen "home" and cannot be used on Screen "settings"')
+    ));
+
+    settings.assets[0].slots.content.pop();
+    manifest.assets.push({
+      id: "settings-unused",
+      directory: "assets/settings-unused",
+      screen: "settings",
+      "copied-from": "unused"
+    });
+    await fs.mkdir(path.join(root, "assets", "settings-unused"));
+    await fs.writeFile(
+      path.join(root, "assets", "settings-unused", "asset.yml"),
+      (await fs.readFile(path.join(root, "assets", "unused", "asset.yml"), "utf8"))
+        .replace(/^id: unused$/m, "id: settings-unused")
+    );
+    await fs.copyFile(
+      path.join(root, "assets", "unused", "asset.html"),
+      path.join(root, "assets", "settings-unused", "asset.html")
+    );
+    settings.assets[0].slots.content.push({ "asset-template": "settings-unused" });
+    await fs.writeFile(settingsPath, YAML.stringify(settings));
+    await fs.writeFile(manifestPath, YAML.stringify(manifest));
+    result = await validateProject(root);
+    assert.deepEqual(result.errors, []);
+
+    localAsset.screen = "missing";
+    await fs.writeFile(manifestPath, YAML.stringify(manifest));
+    result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes('references unknown Screen "missing"')));
+
+    localAsset.screen = "home";
+    await fs.writeFile(manifestPath, YAML.stringify(manifest));
+    result = await validateProject(root);
+    assert.deepEqual(result.errors, []);
+
+    home.assets[0].slots.content = home.assets[0].slots.content.filter(
+      (instance) => instance["asset-template"] !== "unused"
+    );
+    manifest.assets = manifest.assets.filter((entry) => entry.id !== "unused");
+    await fs.writeFile(homePath, YAML.stringify(home));
+    await fs.writeFile(manifestPath, YAML.stringify(manifest));
+    await fs.rm(path.join(root, "assets", "unused"), { recursive: true, force: true });
+    result = await validateProject(root);
+    assert.deepEqual(result.errors, []);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("validates OpenSpec behavior spec requirements and scenarios", async () => {
+  assert.equal(validation.validateSpecContent(validSpec), true);
+  assert.throws(
+    () => validation.validateSpecContent(validSpec.replace("The layout SHALL", "The layout")),
+    /normative SHALL, MUST, SHOULD, or MAY statement/
+  );
+  assert.throws(
+    () => validation.validateSpecContent(validSpec.replace("- **THEN**", "- THEN")),
+    /include "- \*\*WHEN\*\* \.\.\." and "- \*\*THEN\*\* \.\.\." steps/
+  );
+
+  const root = await createProject();
+  try {
+    const specPath = path.join(root, "specs", "layout-behavior.md");
+    await fs.writeFile(specPath, validSpec.replace("## Requirements", "## Behavior"));
+    const result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes('"## Requirements"')));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects legacy project Workflows and instance interactions", async () => {
+  const root = await createProject();
+  try {
+    const manifestPath = path.join(root, "project.yml");
+    const manifest = YAML.parse(await fs.readFile(manifestPath, "utf8"));
+    manifest.workflows = [];
+    await fs.writeFile(manifestPath, YAML.stringify(manifest));
+    let result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes("workflows are no longer supported")));
+
+    delete manifest.workflows;
+    await fs.writeFile(manifestPath, YAML.stringify(manifest));
+    const screenPath = path.join(root, "screens", "home.yml");
+    const screen = YAML.parse(await fs.readFile(screenPath, "utf8"));
+    screen.assets[0].interactions = [];
+    await fs.writeFile(screenPath, YAML.stringify(screen));
+    result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes("interactions are no longer supported")));
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -280,7 +488,6 @@ test("prune reports candidates without deleting and removes only with --apply", 
     });
     assert.equal(report.status, 0, report.stderr);
     assert.match(report.stdout, /asset unused/);
-    assert.match(report.stdout, /workflow orphan/);
     assert.equal(await fs.readFile(manifestPath, "utf8"), originalManifest);
     await fs.access(path.join(root, "assets", "unused", "asset.yml"));
 
@@ -290,9 +497,7 @@ test("prune reports candidates without deleting and removes only with --apply", 
     assert.equal(applied.status, 0, applied.stderr);
     const manifest = YAML.parse(await fs.readFile(manifestPath, "utf8"));
     assert.deepEqual(manifest.assets.map((asset) => asset.id), ["layout"]);
-    assert.deepEqual(manifest.workflows, []);
     await assert.rejects(fs.access(path.join(root, "assets", "unused")));
-    await assert.rejects(fs.access(path.join(root, "workflows", "orphan.yml")));
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

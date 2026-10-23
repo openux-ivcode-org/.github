@@ -16,9 +16,9 @@ Run the commands as `openux ...` when the package's `bin` entry is available, or
 | `openux server update [--port <port>]` | Notify connected browser tabs after project files have changed. Tabs without unsaved edits refresh; tabs with unsaved edits are left untouched and prompted to save or reset before refreshing. |
 | `openux init [--project <directory>]` | Create a starter project under `<directory>/openux` (defaults to the current directory). Refuses to overwrite any generated file that already exists. |
 | `openux validate [--project <directory>]` | Validate project resources, asset bundles, local file references, and references between resources. |
-| `openux schema [project\|screen\|asset\|theme\|workflow]` | Print Markdown authoring guidance. Without a type, print all supported guidance. |
+| `openux schema [project\|screen\|asset\|theme\|spec]` | Print Markdown authoring guidance. Without a type, print all supported guidance. |
 | `openux render <screen> --format <html\|image> [--output <file>] [--project <directory>]` | Render a Screen by ID as HTML or a full-page image. |
-| `openux prune [--apply] [--project <directory>]` | Report unused assets and workflows. No files are removed unless `--apply` is supplied. |
+| `openux prune [--apply] [--project <directory>]` | Report unused assets. No files are removed unless `--apply` is supplied. |
 
 `--port` selects the local server port for `server` commands. The status, selection, and update commands default to port `3000` or the `OPENUX_PORT` / `PORT` environment setting.
 
@@ -47,7 +47,7 @@ openux render sign-in --format image --output sign-in.png
 
 ## Pruning
 
-Pruning is non-destructive by default: `openux prune` reports candidates without removing them. Applying the cleanup requires `--apply`. An asset is a candidate only when no Screen instance uses it, including instances nested in asset slots. A workflow is a candidate only when no asset interaction invokes it. Applying prune removes the candidate resource directories or files and their entries in `project.yml`.
+Pruning is non-destructive by default: `openux prune` reports candidates without removing them. Applying the cleanup requires `--apply`. An asset is a candidate only when no Screen instance uses it, including instances nested in asset slots. Applying prune removes the candidate asset directory and its entry in `project.yml`. A project-wide behavior spec may be linked from `project.yml`; instance-specific specs are linked from Screen asset instances.
 
 ## Intended workflow
 

@@ -4,7 +4,7 @@
 
 ## 1. Purpose
 
-OpenUX is an open standard for specifying user interfaces, interactions, and workflows.
+OpenUX is an open standard for specifying user interfaces, interactions, and intended behavior.
 
 It defines a structured, machine-readable format that allows humans and AI agents to create, understand, validate, and modify interface specifications consistently.
 
@@ -14,13 +14,13 @@ The standard is the core deliverable. Editors, validators, and other tools consu
 
 ## 2. Scope
  
-OpenUX should support specifications ranging from workflow-focused descriptions to highly detailed visual and behavioral specifications.
+OpenUX should support specifications ranging from behavior-focused descriptions to highly detailed visual and behavioral specifications.
 
 A project does not need to specify every aspect of its interface. The level of detail and constraint should emerge from what the user specifies, rather than from a single project-wide precision mode.
 
 Examples include:
 
-- **Workflow-focused:** Specify user actions and expected behavior while leaving visual design open.
+- **Behavior-focused:** Specify user actions and expected behavior while leaving visual design open.
 - **Appearance-focused:** Specify visual presentation while leaving implementation details or behavior flexible where appropriate.
 - **Balanced:** Specify important visual and behavioral details while allowing flexibility elsewhere.
 - **Strict:** Define requirements precisely enough that an implementation has little or no discretion in constrained areas.
@@ -53,7 +53,7 @@ When a specification is incomplete or internally conflicting, tools should ident
 
 Adherence describes how closely an implementation must follow the specification for a particular category. It is independent of how much detail the specification contains.
 
-A strict but underspecified workflow is still underspecified. Strictness does not authorize an agent to invent missing requirements.
+A strict but underspecified behavior spec is still underspecified. Strictness does not authorize an agent to invent missing requirements.
 
 ### 4.1 Adherence Levels
 
@@ -74,7 +74,7 @@ For example:
 
 ```yaml
 adherence:
-  workflow: strict
+  behavior: strict
   layout: strict
   theme: none
   asset: loose

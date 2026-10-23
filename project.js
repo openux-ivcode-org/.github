@@ -38,9 +38,8 @@ async function validateProject(projectRoot) {
   const errors = [];
   const assets = new Map();
   const screens = [];
-  const workflows = [];
   const usedAssetIds = new Set();
-  const referencedWorkflowIds = new Set();
+  const referencedSpecPaths = new Set();
   let project;
   let theme;
 
@@ -109,13 +108,21 @@ async function validateProject(projectRoot) {
 
   project = await readYaml("project.yml");
   if (!project) {
-    return { errors, project: null, assets, screens, workflows, usedAssetIds, referencedWorkflowIds };
+    return { errors, project: null, assets, screens, usedAssetIds, referencedSpecPaths };
   }
 
   if (!Array.isArray(project.screens)) errors.push("project.yml: screens must be a list.");
   if (!Array.isArray(project.assets)) errors.push("project.yml: assets must be a list.");
-  if (project.workflows !== undefined && !Array.isArray(project.workflows)) {
-    errors.push("project.yml: workflows must be a list when present.");
+  if (Object.hasOwn(project, "workflows")) {
+    errors.push("project.yml: workflows are no longer supported; use project.spec or an asset instance's spec.");
+  }
+  if (project.spec !== undefined) {
+    try {
+      validation.validateSpecPath(project.spec);
+      referencedSpecPaths.add(project.spec);
+    } catch (error) {
+      pushError(errors, "project.yml spec", error);
+    }
   }
   if (typeof project.theme !== "string" || !project.theme) {
     errors.push("project.yml: theme must name a Theme YAML file.");
@@ -152,7 +159,26 @@ async function validateProject(projectRoot) {
 
   const assetEntries = indexEntries(project.assets, "assets");
   const screenEntries = indexEntries(project.screens, "screens");
-  const workflowEntries = indexEntries(project.workflows || [], "workflows");
+  const screenIds = new Set(screenEntries.map((entry) => entry.id));
+  for (const entry of assetEntries) {
+    if (entry.screen === undefined) continue;
+    if (typeof entry.screen !== "string" || !/^[a-z][a-z0-9-]*$/.test(entry.screen)) {
+      errors.push(`project.yml: asset "${entry.id}" screen must be a Screen ID.`);
+    } else if (!screenIds.has(entry.screen)) {
+      errors.push(`project.yml: asset "${entry.id}" references unknown Screen "${entry.screen}".`);
+    }
+  }
+  for (const entry of assetEntries) {
+    if (entry["copied-from"] === undefined) continue;
+    if (typeof entry["copied-from"] !== "string" ||
+        !/^[a-z][a-z0-9-]*$/.test(entry["copied-from"]) ||
+        entry["copied-from"] === entry.id) {
+      errors.push(`project.yml: asset "${entry.id}" copied-from must be a different asset ID.`);
+    }
+    if (!entry.screen) {
+      errors.push(`project.yml: copied asset "${entry.id}" must be assigned to a Screen.`);
+    }
+  }
 
   for (const entry of assetEntries) {
     const directory = entry.directory.replace(/\/+$/, "");
@@ -205,9 +231,13 @@ async function validateProject(projectRoot) {
     if (data) screens.push({ id: entry.id, file: entry.file, data });
   }
 
-  const screenIds = new Set(screenEntries.map((entry) => entry.id));
   for (const screen of screens) {
-    if (!Array.isArray(screen.data.assets) || screen.data.assets.length !== 1) {
+    if (!Array.isArray(screen.data.assets)) {
+      errors.push(`${screen.file}: Screen "${screen.id}" assets must be a list.`);
+      continue;
+    }
+    if (screen.data.assets.length === 0) continue;
+    if (screen.data.assets.length !== 1) {
       errors.push(`${screen.file}: Screen "${screen.id}" must contain exactly one root layout asset.`);
       continue;
     }
@@ -231,6 +261,22 @@ async function validateProject(projectRoot) {
       if (!asset) {
         errors.push(`${location}: references unknown asset "${assetId}".`);
         return;
+      }
+      if (asset.screen && asset.screen !== screen.id) {
+        errors.push(
+          `${location}: asset "${assetId}" belongs to Screen "${asset.screen}" and cannot be used on Screen "${screen.id}".`
+        );
+      }
+      if (instance.spec !== undefined) {
+        try {
+          validation.validateSpecPath(instance.spec);
+          referencedSpecPaths.add(instance.spec);
+        } catch (error) {
+          pushError(errors, `${location} spec`, error);
+        }
+      }
+      if (Object.hasOwn(instance, "interactions")) {
+        errors.push(`${location}: interactions are no longer supported; describe behavior in the instance's Markdown spec.`);
       }
       const definitions = asset.data.attributes || {};
       const values = instance.attributes === undefined ? {} : instance.attributes;
@@ -271,26 +317,21 @@ async function validateProject(projectRoot) {
           );
         }
       }
-      if (instance.interactions !== undefined && !Array.isArray(instance.interactions)) {
-        errors.push(`${location}: interactions must be a list.`);
-      } else {
-        for (const interaction of instance.interactions || []) {
-          const action = interaction?.action;
-          if (action?.type === "invoke-workflow") {
-            if (typeof action.workflow !== "string") {
-              errors.push(`${location}: invoke-workflow action must name a workflow.`);
-            } else {
-              referencedWorkflowIds.add(action.workflow);
-            }
-          }
-        }
-      }
       return asset;
     }
 
     const rootAsset = validateInstance(screen.data.assets[0], "[0]");
     if (rootAsset && !rootAsset.data.slots?.length) {
       errors.push(`${screen.file}: root asset "${rootAsset.id}" must define at least one named slot.`);
+    }
+  }
+
+  for (const specPath of referencedSpecPaths) {
+    try {
+      const target = await resolveProjectPath(projectRoot, specPath, "file");
+      validation.validateSpecContent(await fs.readFile(target, "utf8"));
+    } catch (error) {
+      pushError(errors, `Behavior spec "${specPath}"`, error);
     }
   }
 
@@ -324,31 +365,13 @@ async function validateProject(projectRoot) {
     }
   }
 
-  for (const entry of workflowEntries) {
-    const data = await readYaml(entry.file);
-    if (!data) continue;
-    try {
-      validation.validateWorkflow(data, entry.id, screenIds);
-    } catch (error) {
-      pushError(errors, entry.file, error);
-    }
-    workflows.push({ ...entry, data });
-  }
-  const workflowIds = new Set(workflowEntries.map((entry) => entry.id));
-  for (const workflowId of referencedWorkflowIds) {
-    if (!workflowIds.has(workflowId)) {
-      errors.push(`project.yml: an asset interaction references unknown workflow "${workflowId}".`);
-    }
-  }
-
   return {
     errors,
     project,
     assets,
     screens,
-    workflows,
     usedAssetIds,
-    referencedWorkflowIds
+    referencedSpecPaths
   };
 }
 

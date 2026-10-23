@@ -1,6 +1,6 @@
 ---
 name: openux
-description: Create, inspect, and update OpenUX projects using their schemas, asset library, and CLI. Use when asked to build or revise OpenUX Screens, assets, Themes, Workflows, or project files.
+description: Create, inspect, and update OpenUX projects using their schemas, asset library, and CLI. Use when asked to build or revise OpenUX Screens, assets, Themes, behavior specs, or project files.
 ---
 
 # OpenUX authoring
@@ -11,14 +11,14 @@ Use this skill to make changes to an OpenUX project while preserving its file fo
 
 1. If the user is starting a new project, run `openux init` in the intended working directory to create `openux/project.yml` and a minimal valid starter Screen, layout asset, and Theme. Use `--project <directory>` to choose another working directory. Initialization will not overwrite generated files.
 2. Find `openux/project.yml` in or below the user's working directory. The project root is the directory containing `project.yml`, not necessarily the repository root.
-3. Read `project.yml` to discover the Screen IDs and files, asset IDs and directories, Theme file, and Workflow IDs and files.
+3. Read `project.yml` to discover the Screen IDs and files, asset IDs and directories, Theme file, and optional project-level behavior spec. Also find behavior spec paths in Screen asset instances.
 4. Read the relevant schema before editing:
    - `openux schema project`
    - `openux schema screen`
    - `openux schema asset`
    - `openux schema theme`
-   - `openux schema workflow`
-5. Inspect existing Screens and asset definitions, especially layouts and their declared slots. Reuse available assets when they fit the requested design; do not invent asset IDs, attributes, slot IDs, or unsupported interactions.
+   - `openux schema spec`
+5. Inspect existing Screens and asset definitions, especially layouts and their declared slots. Reuse available assets when they fit the requested design; do not invent asset IDs, attributes, slot IDs, or behavior beyond the linked specs and user request.
 6. Treat the schema files as authoritative for allowed file structure and values. If changing a schema in the OpenUX implementation itself, update the validator and tests to match.
 
 If the `openux` command is not installed but the current repository contains the CLI, use `npm run openux -- <command>` or `node cli.js <command>`.
@@ -26,9 +26,14 @@ If the `openux` command is not installed but the current repository contains the
 ## Build or revise a Screen
 
 - A Screen file is listed under `screens` in `project.yml`. Its ID belongs in the manifest, not in the Screen YAML file.
-- A Screen has exactly one root asset instance. Use a layout asset that declares slots, then place child asset instances into its slots.
+- A Screen may be empty while being built. Add one root layout asset that declares slots, then place child asset instances into its slots; populated Screens have exactly one root.
+- In `project.yml`, omit an asset entry's `screen` property for a shared template; set it to the owning Screen ID for a page-specific template. A page-specific template may only be used by its owning Screen. Dragging one to another Screen creates a separate page-local copy; use the shared library for templates intended to remain reusable across Screens. A copied template may use `copied-from` to record its source asset ID.
+- Keep asset IDs globally unique. Use the optional `category` path in `asset.yml` to organize templates within the shared library or a Screen's expandable asset list.
 - Use only attributes declared by an asset and marked `overridable: true`. Values must match the declared type and any `options`.
-- Add interactions only when requested and supported by the schema: `click` events can invoke a Workflow listed in the project manifest.
+- Link at most one Markdown behavior spec to an asset instance with its `spec` path. Use the spec to describe intended behavior; it is not an executable action.
+- Use the optional project-level `spec` property in `project.yml` for behavior and constraints that apply across the project; keep instance-specific behavior in the asset instance's `spec`.
+- Write behavior specs in OpenSpec format: include `## Purpose` and `## Requirements`; give each requirement a short `### Requirement:` heading, an immediate normative statement, and at least one `#### Scenario:` with bold `GIVEN` (optional), `WHEN`, `THEN`, and `AND` bullet keywords. Keep requirements behavior-focused and testable.
+- Before authoring or filling a behavior spec, read `openux schema spec` and derive requirements from the user's intent and relevant Screen, asset, and instance context. Treat any example content in a new editor draft as a placeholder, replace it with the specified behavior, and do not save the unchanged draft.
 - Keep Screen YAML structural: use assets and their attributes to express the composition. Add a new asset only when existing assets cannot express the needed visual element or layout.
 - When adding an asset, add its ID and directory to `project.yml`, create its `asset.yml` and HTML rendering source, declare its attributes and slots, and include all referenced local resources.
 - Keep manifest paths relative to the project root, use forward slashes, and avoid absolute paths, `.` or `..` segments, and hidden path segments.
@@ -54,6 +59,6 @@ Use `openux server selected` when the user is asking about the currently selecte
 ## Scope and safety
 
 - Edit project files directly; the CLI is for schema guidance, validation, rendering, and editor coordination, not a separate authoring layer.
-- Do not remove assets or Workflows as a side effect of a Screen change. `openux prune` reports unused resources by default; it removes them only with the explicit `--apply` option.
-- Workflow files describe steps and transitions; they do not implement backend behavior.
+- Do not remove assets or behavior specs as a side effect of a Screen change. `openux prune` reports unused assets by default; it removes them only with the explicit `--apply` option.
+- Preserve behavior specs unless the user explicitly requests a change. Use the optional project-level spec for project-wide behavior and the single spec attached to a relevant instance for instance-specific behavior.
 - Preserve unrelated user changes and avoid adding generated render output to the project unless requested.

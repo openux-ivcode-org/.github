@@ -15,6 +15,83 @@
     return value !== null && typeof value === "object" && !Array.isArray(value);
   }
 
+  function validateSpecPath(filePath) {
+    if (typeof filePath !== "string" || !/^specs\/[a-z0-9]+(?:-[a-z0-9]+)*\.md$/.test(filePath)) {
+      throw new Error('Behavior spec path must be "specs/<name>.md" with a lowercase kebab-case name.');
+    }
+  }
+
+  function validateSpecContent(source) {
+    if (typeof source !== "string") {
+      throw new Error("Behavior spec content must be Markdown text.");
+    }
+
+    const lines = source.replace(/\r\n?/g, "\n").split("\n");
+    const purposeIndex = lines.findIndex((line) => /^## Purpose\s*$/.test(line));
+    const requirementsIndex = lines.findIndex((line) => /^## Requirements\s*$/.test(line));
+    if (purposeIndex < 0) throw new Error('Behavior spec must include a "## Purpose" section.');
+    if (requirementsIndex < 0) throw new Error('Behavior spec must include a "## Requirements" section.');
+    if (purposeIndex >= requirementsIndex) {
+      throw new Error('"## Purpose" must appear before "## Requirements".');
+    }
+    const purposeEnd = lines.findIndex((line, index) => index > purposeIndex && /^##\s/.test(line));
+    if (!lines.slice(purposeIndex + 1, purposeEnd < 0 ? lines.length : purposeEnd)
+      .some((line) => line.trim())) {
+      throw new Error('"## Purpose" must contain a description.');
+    }
+
+    const requirementsEnd = lines.findIndex((line, index) => index > requirementsIndex && /^##\s/.test(line));
+    const sectionEnd = requirementsEnd < 0 ? lines.length : requirementsEnd;
+    const requirementIndexes = [];
+    for (let index = requirementsIndex + 1; index < sectionEnd; index += 1) {
+      if (/^### Requirement:/.test(lines[index])) requirementIndexes.push(index);
+    }
+    if (requirementIndexes.length === 0) {
+      throw new Error('"## Requirements" must contain at least one "### Requirement: <name>" heading.');
+    }
+
+    for (let index = 0; index < requirementIndexes.length; index += 1) {
+      const requirementIndex = requirementIndexes[index];
+      const name = lines[requirementIndex].slice("### Requirement:".length).trim();
+      if (!name) throw new Error('Each "### Requirement:" heading must have a name.');
+      if (name.length >= 50) {
+        throw new Error(`Requirement name "${name}" must be shorter than 50 characters.`);
+      }
+      if (!/\b(?:SHALL|MUST|SHOULD|MAY)\s+\S/.test(lines[requirementIndex + 1] || "")) {
+        throw new Error(`Requirement "${name}" must be followed immediately by a normative SHALL, MUST, SHOULD, or MAY statement.`);
+      }
+
+      const requirementEnd = index + 1 < requirementIndexes.length
+        ? requirementIndexes[index + 1]
+        : sectionEnd;
+      const scenarioIndexes = [];
+      for (let lineIndex = requirementIndex + 1; lineIndex < requirementEnd; lineIndex += 1) {
+        if (/^#### Scenario:/.test(lines[lineIndex])) scenarioIndexes.push(lineIndex);
+      }
+      if (scenarioIndexes.length === 0) {
+        throw new Error(`Requirement "${name}" must contain at least one "#### Scenario: <name>" section.`);
+      }
+
+      for (let scenarioIndex = 0; scenarioIndex < scenarioIndexes.length; scenarioIndex += 1) {
+        const lineIndex = scenarioIndexes[scenarioIndex];
+        if (!/^#### Scenario:\s+\S/.test(lines[lineIndex])) {
+          throw new Error(`Requirement "${name}" has a scenario heading without a name.`);
+        }
+        const scenarioEnd = scenarioIndex + 1 < scenarioIndexes.length
+          ? scenarioIndexes[scenarioIndex + 1]
+          : requirementEnd;
+        const steps = lines.slice(lineIndex + 1, scenarioEnd)
+          .map((line) => line.match(/^\s*-\s+\*\*(GIVEN|WHEN|THEN|AND)\*\*\s+\S/)?.[1])
+          .filter(Boolean);
+        if (!steps.includes("WHEN") || !steps.includes("THEN")) {
+          throw new Error('Each scenario must include "- **WHEN** ..." and "- **THEN** ..." steps.');
+        }
+      }
+    }
+
+    return true;
+  }
+
   function isValidAttributeValue(definition, value) {
     if (definition.type === "string") return typeof value === "string";
     if (definition.type === "boolean") return typeof value === "boolean";
@@ -146,61 +223,6 @@
     }
   }
 
-  function validateWorkflow(data, workflowId, screenIds) {
-    const source = `Workflow "${workflowId}"`;
-    if (!isMapping(data)) throw new Error(`${source} must be a YAML mapping.`);
-    if (data.id !== workflowId) throw new Error(`${source} id must remain "${workflowId}".`);
-    if (typeof data.entry !== "string" || !data.entry) {
-      throw new Error(`${source} must define an entry step id.`);
-    }
-    if (!Array.isArray(data.steps) || data.steps.length === 0) {
-      throw new Error(`${source} must define at least one step.`);
-    }
-
-    const stepIds = new Set();
-    for (const step of data.steps) {
-      if (!isMapping(step) || typeof step.id !== "string" || !/^[a-z][a-z0-9-]*$/.test(step.id)) {
-        throw new Error(`${source} steps must have ids using lowercase letters, numbers, and hyphens.`);
-      }
-      if (stepIds.has(step.id)) throw new Error(`${source} defines step "${step.id}" more than once.`);
-      stepIds.add(step.id);
-    }
-    if (!stepIds.has(data.entry)) {
-      throw new Error(`${source} entry references unknown step "${data.entry}".`);
-    }
-
-    const knownScreenIds = new Set(screenIds);
-    for (const step of data.steps) {
-      if (!Array.isArray(step.transitions) || step.transitions.length === 0) {
-        throw new Error(`${source} step "${step.id}" must define at least one transition.`);
-      }
-      for (const [index, transition] of step.transitions.entries()) {
-        if (!isMapping(transition)) {
-          throw new Error(`${source} step "${step.id}" transition ${index + 1} must be a mapping.`);
-        }
-        if (typeof transition.when !== "string" || !transition.when.trim()) {
-          throw new Error(`${source} step "${step.id}" transition ${index + 1} must describe when it applies.`);
-        }
-        const destinations = ["next", "to", "result"].filter((key) => Object.hasOwn(transition, key));
-        if (destinations.length !== 1) {
-          throw new Error(`${source} step "${step.id}" transition ${index + 1} must define exactly one of next, to, or result.`);
-        }
-        if (Object.hasOwn(transition, "next") &&
-            (typeof transition.next !== "string" || !stepIds.has(transition.next))) {
-          throw new Error(`${source} step "${step.id}" transition ${index + 1} references an unknown next step.`);
-        }
-        if (Object.hasOwn(transition, "to") &&
-            (typeof transition.to !== "string" || !knownScreenIds.has(transition.to))) {
-          throw new Error(`${source} step "${step.id}" transition ${index + 1} references an unknown Screen.`);
-        }
-        if (Object.hasOwn(transition, "result") &&
-            (typeof transition.result !== "string" || !transition.result.trim())) {
-          throw new Error(`${source} step "${step.id}" transition ${index + 1} must describe its result.`);
-        }
-      }
-    }
-  }
-
   return {
     assetCategoryPath,
     attributeTypes,
@@ -211,7 +233,8 @@
     validateAssetAttributes,
     validateAssetSlotMarkup,
     validateAssetSlots,
-    validateTheme,
-    validateWorkflow
+    validateSpecContent,
+    validateSpecPath,
+    validateTheme
   };
 });

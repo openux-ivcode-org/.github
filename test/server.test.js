@@ -145,10 +145,7 @@ test("creates new Screen YAML files and updates the project manifest", async () 
             data: {
               name: "New Screen",
               description: "",
-              assets: [{
-                "asset-template": "centered-form-layout",
-                slots: { content: [] }
-              }]
+              assets: []
             }
           }
         ]
@@ -170,10 +167,7 @@ test("creates new Screen YAML files and updates the project manifest", async () 
       {
         name: "New Screen",
         description: "",
-        assets: [{
-          "asset-template": "centered-form-layout",
-          slots: { content: [] }
-        }]
+        assets: []
       }
     );
 
@@ -229,6 +223,170 @@ test("saves HTML source only inside an asset directory", async () => {
       })
     });
     assert.equal(rejected.status, 400);
+  });
+});
+
+test("copies page-specific asset directories on save and assigns a new asset ID", async () => {
+  await withServer(async ({ baseUrl, rootDirectory }) => {
+    const projectRoot = path.join(rootDirectory, "openux");
+    await fs.mkdir(path.join(projectRoot, "screens"), { recursive: true });
+    await fs.writeFile(
+      path.join(projectRoot, "project.yml"),
+      YAML.stringify({
+        name: "Example",
+        screens: [{ id: "source", file: "screens/source.yml" }],
+        assets: [{ id: "demo", directory: "assets/demo", screen: "source" }],
+        theme: "theme/theme.yml"
+      })
+    );
+    await fs.writeFile(path.join(projectRoot, "screens/source.yml"), "name: Source\nassets: []\n");
+    await fs.writeFile(
+      path.join(projectRoot, "assets", "demo", "asset.yml"),
+      "id: demo\nname: Demo\n"
+    );
+
+    const nextProject = {
+      name: "Example",
+      screens: [
+        { id: "source", file: "screens/source.yml" },
+        { id: "destination", file: "screens/destination.yml" }
+      ],
+      assets: [
+        { id: "demo", directory: "assets/demo", screen: "source" },
+        {
+          id: "destination-demo",
+          directory: "assets/destination-demo",
+          screen: "destination",
+          "copied-from": "demo"
+        }
+      ],
+      theme: "theme/theme.yml"
+    };
+    const response = await fetch(`${baseUrl}/api/save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        files: [
+          { path: "project.yml", data: nextProject },
+          { path: "assets/destination-demo/asset.yml", content: "id: destination-demo\nname: Edited Demo\n" },
+          { path: "assets/destination-demo/asset.html", content: "<p>Edited</p>" },
+          {
+            path: "screens/destination.yml",
+            create: true,
+            data: {
+              name: "Destination",
+              assets: [{ "asset-template": "destination-demo" }]
+            }
+          }
+        ],
+        assetCopies: [{
+          sourceId: "demo",
+          sourceDirectory: "assets/demo",
+          targetId: "destination-demo",
+          targetDirectory: "assets/destination-demo",
+          targetScreen: "destination"
+        }]
+      })
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      saved: [
+        "project.yml",
+        "assets/destination-demo/asset.yml",
+        "assets/destination-demo/asset.html",
+        "screens/destination.yml"
+      ],
+      copied: ["destination-demo"]
+    });
+    assert.equal(
+      YAML.parse(await fs.readFile(path.join(projectRoot, "assets", "destination-demo", "asset.yml"), "utf8")).name,
+      "Edited Demo"
+    );
+    assert.equal(
+      await fs.readFile(path.join(projectRoot, "assets", "destination-demo", "asset.html"), "utf8"),
+      "<p>Edited</p>"
+    );
+    assert.deepEqual(
+      await fs.readFile(path.join(projectRoot, "assets", "destination-demo", "preview image.png")),
+      Buffer.from("image")
+    );
+    assert.equal(
+      YAML.parse(await fs.readFile(path.join(projectRoot, "assets", "demo", "asset.yml"), "utf8")).id,
+      "demo"
+    );
+  });
+});
+
+test("creates and saves Markdown behavior specs only under specs/", async () => {
+  await withServer(async ({ baseUrl, rootDirectory }) => {
+    const content = [
+      "# Sign-in button",
+      "",
+      "## Purpose",
+      "Describe the sign-in action.",
+      "",
+      "## Requirements",
+      "",
+      "### Requirement: Submit the form",
+      "The button SHALL submit the sign-in form when activated.",
+      "",
+      "#### Scenario: User activates the button",
+      "- **GIVEN** the form contains valid credentials",
+      "- **WHEN** the user activates the button",
+      "- **THEN** the sign-in request is submitted.",
+      ""
+    ].join("\n");
+    const updatedContent = content.replace(
+      "The sign-in request is submitted.",
+      "The sign-in request is sent."
+    );
+    const create = await fetch(`${baseUrl}/api/save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        files: [{
+          path: "specs/sign-in-button.md",
+          create: true,
+          content
+        }]
+      })
+    });
+    assert.equal(create.status, 200);
+    assert.deepEqual(await create.json(), { saved: ["specs/sign-in-button.md"] });
+    const specPath = path.join(rootDirectory, "openux", "specs", "sign-in-button.md");
+    assert.equal(await fs.readFile(specPath, "utf8"), content);
+
+    const update = await fetch(`${baseUrl}/api/save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        files: [{
+          path: "specs/sign-in-button.md",
+          content: updatedContent
+        }]
+      })
+    });
+    assert.equal(update.status, 200);
+    assert.equal(await fs.readFile(specPath, "utf8"), updatedContent);
+
+    const invalidContent = await fetch(`${baseUrl}/api/save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        files: [{ path: "specs/invalid.md", create: true, content: "# Unstructured spec\n" }]
+      })
+    });
+    assert.equal(invalidContent.status, 400);
+    await assert.rejects(fs.access(path.join(rootDirectory, "openux", "specs", "invalid.md")));
+
+    for (const pathValue of ["notes.md", "specs/nested/sign-in.md", "specs/invalid_name.md"]) {
+      const rejected = await fetch(`${baseUrl}/api/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ files: [{ path: pathValue, content: "not allowed" }] })
+      });
+      assert.equal(rejected.status, 400, pathValue);
+    }
   });
 });
 

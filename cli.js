@@ -14,7 +14,7 @@ const schemaFiles = new Map([
   ["screen", "screen.md"],
   ["asset", "asset.md"],
   ["theme", "theme.md"],
-  ["workflow", "workflow.md"]
+  ["spec", "spec.md"]
 ]);
 
 function usage() {
@@ -28,7 +28,7 @@ function usage() {
     "  openux server update [--port <port>]",
     "  openux init [--project <directory>]",
     "  openux validate [--project <directory>]",
-    "  openux schema [project|screen|asset|theme|workflow]",
+    "  openux schema [project|screen|asset|theme|spec]",
     "  openux render <screen> --format <html|image> [--output <file>] [--project <directory>]",
     "  openux prune [--apply] [--project <directory>]"
   ].join("\n");
@@ -192,11 +192,11 @@ async function runServerCommand(command, args) {
 }
 
 async function runSchemaCommand(args) {
-  if (args.length > 1) throw new Error("Usage: openux schema [project|screen|asset|theme|workflow]");
+  if (args.length > 1) throw new Error("Usage: openux schema [project|screen|asset|theme|spec]");
   const type = args[0];
   const docs = type ? [schemaFiles.get(type)] : [...schemaFiles.values()];
   if (type && !docs[0]) {
-    throw new Error(`Unknown schema type "${type}". Use project, screen, asset, theme, or workflow.`);
+    throw new Error(`Unknown schema type "${type}". Use project, screen, asset, theme, or spec.`);
   }
   const content = await Promise.all(docs.map((file) =>
     fs.readFile(path.join(studioRoot, "schema", file), "utf8")
@@ -578,24 +578,14 @@ async function runRenderCommand(args) {
 }
 
 function pruneCandidates(result) {
-  return [
-    ...result.project.assets
-      .filter((asset) => !result.usedAssetIds.has(asset.id))
-      .map((asset) => ({
-        type: "asset",
-        id: asset.id,
-        path: asset.directory,
-        reason: "No Screen instance, including nested instances, uses this asset."
-      })),
-    ...(result.project.workflows || [])
-      .filter((workflow) => !result.referencedWorkflowIds.has(workflow.id))
-      .map((workflow) => ({
-        type: "workflow",
-        id: workflow.id,
-        path: workflow.file,
-        reason: "No asset interaction invokes this workflow."
-      }))
-  ];
+  return result.project.assets
+    .filter((asset) => !result.usedAssetIds.has(asset.id))
+    .map((asset) => ({
+      type: "asset",
+      id: asset.id,
+      path: asset.directory,
+      reason: "No Screen instance, including nested instances, uses this asset."
+    }));
 }
 
 function nodeValue(node, key) {
@@ -605,15 +595,13 @@ function nodeValue(node, key) {
 async function applyPrune(projectRoot, result, candidates) {
   if (!candidates.length) return;
   const removeAssetIds = new Set(candidates.filter((candidate) => candidate.type === "asset").map((entry) => entry.id));
-  const removeWorkflowIds = new Set(candidates.filter((candidate) => candidate.type === "workflow").map((entry) => entry.id));
   const manifestPath = await resolveProjectPath(projectRoot, "project.yml", "file");
   const source = await fs.readFile(manifestPath, "utf8");
   const document = YAML.parseDocument(source);
   if (document.errors.length) throw new Error(`Could not safely update project.yml: ${document.errors[0].message}`);
-  for (const [key, ids] of [["assets", removeAssetIds], ["workflows", removeWorkflowIds]]) {
-    const sequence = document.get(key, true);
-    if (!sequence || !Array.isArray(sequence.items)) continue;
-    sequence.items = sequence.items.filter((entry) => !ids.has(nodeValue(entry, "id")));
+  const assetSequence = document.get("assets", true);
+  if (assetSequence && Array.isArray(assetSequence.items)) {
+    assetSequence.items = assetSequence.items.filter((entry) => !removeAssetIds.has(nodeValue(entry, "id")));
   }
 
   const quarantine = path.join(projectRoot, `.openux-prune-${randomUUID()}`);
@@ -690,7 +678,7 @@ async function runPruneCommand(args) {
   }
   const candidates = pruneCandidates(result);
   if (!candidates.length) {
-    console.log("No unused assets or workflows found.");
+    console.log("No unused assets found.");
     return;
   }
   for (const candidate of candidates) {

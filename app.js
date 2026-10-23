@@ -17,7 +17,7 @@ const byId = (id) => document.getElementById(id);
 let project;
 let screens = [];
 let assets = new Map();
-let workflows = new Map();
+let specSources = new Map();
 let theme;
 let themeStylesheet = "";
 let themeStylesheetBase = appRoot;
@@ -25,14 +25,16 @@ let themeModePreference = "system";
 let systemThemeMode = systemThemeQuery?.matches ? "dark" : "light";
 let appliedThemeTokens = new Set();
 let activeScreenIndex = 0;
+const expandedScreenIds = new Set();
 let activeAssetId = null;
 let activeInstancePath = [];
 let viewingAssetTemplate = false;
 let viewingTheme = false;
 let viewingProject = false;
-let viewingWorkflow = false;
-let activeWorkflowId = null;
-let activeWorkflowStepId = null;
+let viewingSpec = false;
+let activeSpecPath = null;
+let activeSpecInstancePath = [];
+let activeSpecOwner = "instance";
 let assetEditorRestoreId = null;
 let paletteAssetDropHandled = false;
 let reviewedInSession = false;
@@ -40,16 +42,18 @@ let hasEdits = false;
 let assetContextMenuTarget = null;
 let pendingAssetDeletion = null;
 let deleteDialogReturnFocus = null;
+const pendingAssetCopies = [];
 const dirtyFiles = new Map();
 const invalidYamlFiles = new Map();
 const createdScreenFiles = new Set();
+const createdSpecFiles = new Set();
+const createdSpecDrafts = new Map();
 let editVersion = 0;
 let isSaving = false;
 let assetPreviewTimer = null;
 let assetPreviewVersion = 0;
 let editorFieldId = 0;
 let assetStyleScopeId = 0;
-let workflowDiagramResizeObserver = null;
 
 if (isRenderOnly) document.body.classList.add("render-only");
 
@@ -90,6 +94,23 @@ async function loadYaml(path) {
   return parsed;
 }
 
+function collectInstanceSpecPaths(instance, paths = new Set()) {
+  if (!instance || typeof instance !== "object" || Array.isArray(instance)) return paths;
+  if (Object.hasOwn(instance, "interactions")) {
+    throw new Error("Screen asset interactions are no longer supported; describe behavior in an instance-linked Markdown spec.");
+  }
+  if (instance.spec !== undefined) {
+    sharedValidation.validateSpecPath(instance.spec);
+    paths.add(instance.spec);
+  }
+  for (const children of Object.values(instance.slots || {})) {
+    if (Array.isArray(children)) {
+      for (const child of children) collectInstanceSpecPaths(child, paths);
+    }
+  }
+  return paths;
+}
+
 function assetCategoryPath(template, source) {
   return sharedValidation.assetCategoryPath(template, source);
 }
@@ -108,14 +129,6 @@ function validateAssetSlotMarkup(template, markup, source) {
 
 function validateTheme(data, source) {
   return sharedValidation.validateTheme(data, source);
-}
-
-function validateWorkflow(data, workflowId) {
-  return sharedValidation.validateWorkflow(
-    data,
-    workflowId,
-    screens.map((screen) => screen.id)
-  );
 }
 
 function getDefinedThemeModes() {
@@ -150,10 +163,6 @@ function themeModeLabel(mode) {
   return mode.charAt(0).toUpperCase() + mode.slice(1);
 }
 
-function currentThemeLabel() {
-  return `Theme: ${theme?.name || "Theme"} · ${themeModeLabel(getActiveThemeMode())}`;
-}
-
 function isValidAttributeValue(definition, value) {
   return sharedValidation.isValidAttributeValue(definition, value);
 }
@@ -166,19 +175,21 @@ async function loadProject(selectionToRestore = null) {
     clearTimeout(template.yamlTimer);
     template.yamlParseVersion += 1;
   }
-  for (const workflow of workflows.values()) {
-    clearTimeout(workflow.yamlTimer);
-    workflow.yamlParseVersion += 1;
-  }
   createdScreenFiles.clear();
+  createdSpecFiles.clear();
+  createdSpecDrafts.clear();
+  pendingAssetCopies.length = 0;
   setPreviewMessage("loading", "Reading project files...");
   try {
     project = await loadYaml("project.yml");
     if (!Array.isArray(project.screens) || !Array.isArray(project.assets)) {
       throw new Error("project.yml must list screens and assets.");
     }
+    if (Object.hasOwn(project, "workflows")) {
+      throw new Error("project.yml workflows are no longer supported; use project.spec or an asset instance's spec.");
+    }
 
-    const [loadedScreens, loadedAssets, loadedTheme, loadedWorkflows] = await Promise.all([
+    const [loadedScreens, loadedAssets, loadedTheme] = await Promise.all([
       Promise.all(project.screens.map(async (entry) => ({
         id: entry.id,
         file: entry.file,
@@ -202,6 +213,8 @@ async function loadProject(selectionToRestore = null) {
         validateAssetSlotMarkup(data, html, `${directory}/${htmlPath}`);
         return {
           id: entry.id,
+          screen: entry.screen,
+          copiedFrom: entry["copied-from"],
           directory,
           base,
           data,
@@ -232,50 +245,45 @@ async function loadProject(selectionToRestore = null) {
           stylesheet: await loadText(data.styles, themeBase),
           stylesheetBase: stylesDirectory ? safeProjectUrl(stylesDirectory, themeBase) : themeBase
         };
-      })(),
-      Promise.all((project.workflows || []).map(async (entry) => {
-        const [data, yamlSource] = await Promise.all([
-          loadYaml(entry.file),
-          loadText(entry.file)
-        ]);
-        return {
-          id: entry.id,
-          file: entry.file,
-          data,
-          yamlSource,
-          yamlSourceMode: "source",
-          yamlParseVersion: 0,
-          yamlSerializeVersion: 0,
-          yamlTimer: null,
-          yamlStatus: { message: "", isError: false }
-        };
-      }))
+      })()
     ]);
 
     screens = loadedScreens;
     assets = new Map(loadedAssets.map((asset) => [asset.id, asset]));
-    workflows = new Map(loadedWorkflows.map((workflow) => [workflow.id, workflow]));
-    for (const workflow of workflows.values()) {
-      validateWorkflow(workflow.data, workflow.id);
+    for (const asset of loadedAssets) {
+      if (asset.screen !== undefined && !screens.some((screen) => screen.id === asset.screen)) {
+        throw new Error(`Asset "${asset.id}" references unknown Screen "${asset.screen}".`);
+      }
     }
+    const specPaths = new Set();
+    for (const screen of screens) {
+      for (const instance of screen.data.assets || []) collectInstanceSpecPaths(instance, specPaths);
+    }
+    if (project.spec !== undefined) {
+      sharedValidation.validateSpecPath(project.spec);
+      specPaths.add(project.spec);
+    }
+    specSources = new Map(await Promise.all([...specPaths].map(async (filePath) =>
+      [filePath, await loadText(filePath)]
+    )));
     theme = loadedTheme.data;
     themeStylesheet = loadedTheme.stylesheet;
     themeStylesheetBase = loadedTheme.stylesheetBase;
     viewingTheme = false;
     viewingProject = false;
-    viewingWorkflow = false;
-    activeWorkflowId = null;
-    activeWorkflowStepId = null;
+    viewingSpec = false;
+    activeSpecPath = null;
+    activeSpecInstancePath = [];
+    activeSpecOwner = "instance";
     hasEdits = false;
     dirtyFiles.clear();
     invalidYamlFiles.clear();
     byId("create-screen").disabled = false;
     byId("project-nav").disabled = false;
-    updateSaveControls("All changes saved");
+    updateSaveControls();
     reviewedInSession = false;
     applyTheme();
     renderNavigation();
-    updateReviewCard();
     if (isRenderOnly) {
       const renderIndex = screens.findIndex((screen) => screen.id === renderRequestedScreen);
       if (renderIndex < 0) throw new Error(`Unknown Screen "${renderRequestedScreen}".`);
@@ -330,6 +338,8 @@ function standaloneScreenHtml() {
   outputDocument.documentElement.lang = "en";
   const rootStyle = document.documentElement.getAttribute("style") || "";
   if (rootStyle) outputDocument.documentElement.setAttribute("style", rootStyle);
+  const themeBackground = getThemeColors().background;
+  if (themeBackground !== undefined) outputDocument.body.style.backgroundColor = themeBackground;
   const charset = outputDocument.createElement("meta");
   charset.setAttribute("charset", "utf-8");
   outputDocument.head.append(charset);
@@ -349,16 +359,14 @@ function currentUiSelection() {
   } : null;
   if (viewingProject) return { view: "project", screen: screenContext };
   if (viewingTheme) return { view: "theme", screen: screenContext, file: project?.theme || null };
-  if (viewingWorkflow) {
-    const workflow = workflows.get(activeWorkflowId);
+  if (viewingSpec) {
     return {
-      view: "workflow",
-      screen: screenContext,
-      workflow: workflow ? {
-        id: workflow.id,
-        name: workflow.data.name || workflow.id,
-        file: workflow.file,
-        selectedStepId: activeWorkflowStepId
+      view: "spec",
+      screen: activeSpecOwner === "project" ? null : screenContext,
+      spec: activeSpecPath ? {
+        file: activeSpecPath,
+        owner: activeSpecOwner,
+        ...(activeSpecOwner === "instance" ? { instancePath: activeSpecInstancePath } : {})
       } : null
     };
   }
@@ -407,21 +415,36 @@ async function restoreUiSelection(selection) {
     byId("theme-nav").click();
     return;
   }
-  if (selection.view === "workflow" && workflows.has(selection.workflow?.id)) {
-    renderWorkflowEditor(selection.workflow.id);
-    const workflow = workflows.get(selection.workflow.id);
-    if (workflow.data.steps.some((step) => step.id === selection.workflow.selectedStepId)) {
-      activeWorkflowStepId = selection.workflow.selectedStepId;
-      renderWorkflowDiagram(workflow);
-      renderInspector();
-    }
-    return;
-  }
   if (selection.view === "asset-template" && assets.has(selection.asset?.id)) {
     await renderAssetTemplate(selection.asset.id);
     return;
   }
+  if (selection.view === "spec" && selection.spec?.owner === "project") {
+    if (project.spec === selection.spec.file) {
+      renderProjectOverview();
+      await renderSpecEditor(selection.spec.file, [], "project");
+    } else {
+      renderProjectOverview();
+    }
+    return;
+  }
   await renderScreen(activeScreenIndex);
+  if (selection.view === "spec") {
+    const screen = screens[activeScreenIndex];
+    const instancePath = selection.spec?.instancePath;
+    const instance = Array.isArray(instancePath) && screen
+      ? getInstanceAtPath(screen, instancePath)
+      : null;
+    if (instance && typeof selection.spec?.file === "string" &&
+        instance.spec === selection.spec.file) {
+      await renderSpecEditor(selection.spec.file, instancePath);
+      return;
+    }
+    if (instance) {
+      selectInstance(instancePath, instance["asset-template"]);
+      return;
+    }
+  }
   const instancePath = selection.selectedAsset?.instancePath;
   if (Array.isArray(instancePath)) {
     const screen = screens[activeScreenIndex];
@@ -432,7 +455,7 @@ async function restoreUiSelection(selection) {
 
 function refreshFromExternalChanges() {
   if (hasEdits) {
-    showWorkflowOutput(
+    showEditorMessage(
       "Project files changed outside the editor",
       "Save or reset your editor changes before refreshing from disk."
     );
@@ -449,53 +472,102 @@ if (!isRenderOnly && typeof EventSource !== "undefined") {
 function applyTheme() {
   const colors = getThemeColors();
   const colorNames = new Set(Object.keys(colors));
+  const themeRoot = byId("screen-preview");
   for (const name of appliedThemeTokens) {
-    if (!colorNames.has(name)) document.documentElement.style.removeProperty(`--theme-${name}`);
+    if (!colorNames.has(name)) themeRoot.style.removeProperty(`--theme-${name}`);
   }
   for (const [name, value] of Object.entries(colors)) {
-    document.documentElement.style.setProperty(`--theme-${name}`, value);
+    themeRoot.style.setProperty(`--theme-${name}`, value);
   }
   appliedThemeTokens = colorNames;
   byId("screen-preview").style.colorScheme = getActiveThemeMode();
   byId("theme-name").textContent = theme.name || "Theme";
-  byId("theme-chip").textContent = currentThemeLabel();
 }
 
 function renderNavigation() {
-  if (!viewingAssetTemplate && !viewingTheme && !viewingProject && !viewingWorkflow) {
+  if (!viewingAssetTemplate && !viewingTheme && !viewingProject && !viewingSpec) {
     byId("breadcrumb").textContent = "Screens";
   }
   const screenNav = byId("screen-nav");
-  const workflowNav = byId("workflow-nav");
   const assetNav = byId("asset-nav");
   screenNav.replaceChildren();
-  workflowNav.replaceChildren();
   assetNav.replaceChildren();
 
   screens.forEach((screen, index) => {
+    const screenName = screen.data.name || screen.id;
+    const pageAssets = [...assets.values()].filter((asset) => asset.screen === screen.id);
+    const group = element("div", "screen-nav-group");
+    const row = element("div", "screen-nav-row");
     const button = element("button", "side-item screen-option");
     button.type = "button";
     button.dataset.screenIndex = String(index);
     button.dataset.openuxScreenId = screen.id;
-    button.dataset.openuxScreenName = screen.data.name || screen.id;
+    button.dataset.openuxScreenName = screenName;
     button.append(element("span", "side-icon", "S"));
-    button.append(element("span", "", screen.data.name || screen.id));
+    button.append(element("span", "screen-option-name", screenName));
     button.addEventListener("click", () => renderScreen(index));
-    screenNav.append(button);
+    row.append(button);
+
+    const expandButton = element("button", "screen-expand-button");
+    expandButton.id = `screen-expand-${screen.id}`;
+    expandButton.type = "button";
+    expandButton.setAttribute("aria-expanded", String(expandedScreenIds.has(screen.id)));
+    expandButton.setAttribute("aria-controls", `screen-assets-${screen.id}`);
+    expandButton.setAttribute(
+      "aria-label",
+      `${expandedScreenIds.has(screen.id) ? "Hide" : "Show"} page-specific assets for ${screenName}`
+    );
+    expandButton.addEventListener("click", () =>
+      setScreenExpanded(screen.id, !expandedScreenIds.has(screen.id))
+    );
+    row.append(expandButton);
+    group.append(row);
+
+    const pageAssetPanel = element("div", "screen-assets");
+    pageAssetPanel.id = `screen-assets-${screen.id}`;
+    pageAssetPanel.hidden = !expandedScreenIds.has(screen.id);
+    pageAssetPanel.setAttribute("role", "group");
+    pageAssetPanel.setAttribute("aria-label", `${screenName} page-specific assets`);
+    if (pageAssets.length) {
+      const library = element("div", "asset-library");
+      library.append(...renderAssetCategories(pageAssets));
+      pageAssetPanel.append(library);
+    } else {
+      pageAssetPanel.append(element("div", "asset-hint", "No page-specific templates."));
+    }
+    group.append(pageAssetPanel);
+    screenNav.append(group);
   });
 
-  for (const workflow of workflows.values()) {
-    const button = element("button", "side-item workflow-option");
-    button.type = "button";
-    button.dataset.workflowId = workflow.id;
-    button.append(element("span", "side-icon", "W"));
-    button.append(element("span", "", workflow.data.name || workflow.id));
-    button.addEventListener("click", () => renderWorkflowEditor(workflow.id));
-    workflowNav.append(button);
+  const sharedAssets = [...assets.values()].filter((asset) => asset.screen === undefined);
+  if (sharedAssets.length) {
+    byId("asset-library-label").hidden = false;
+    assetNav.hidden = false;
+    assetNav.append(...renderAssetCategories(sharedAssets));
+  } else {
+    byId("asset-library-label").hidden = true;
+    assetNav.hidden = true;
   }
+  updateNavigationSelection();
+}
 
+function setScreenExpanded(screenId, expanded) {
+  if (expanded) expandedScreenIds.add(screenId);
+  else expandedScreenIds.delete(screenId);
+  const button = byId(`screen-expand-${screenId}`);
+  const panel = byId(`screen-assets-${screenId}`);
+  if (!button || !panel) return;
+  button.setAttribute("aria-expanded", String(expanded));
+  button.setAttribute(
+    "aria-label",
+    `${expanded ? "Hide" : "Show"} page-specific assets for ${screens.find((screen) => screen.id === screenId)?.data.name || screenId}`
+  );
+  panel.hidden = !expanded;
+}
+
+function renderAssetCategories(assetEntries) {
   const categories = { children: new Map(), assets: [] };
-  for (const asset of assets.values()) {
+  for (const asset of assetEntries) {
     let category = categories;
     for (const segment of assetCategoryPath(asset.data, `${asset.directory}/asset.yml`)) {
       if (!category.children.has(segment)) {
@@ -505,10 +577,9 @@ function renderNavigation() {
     }
     category.assets.push(asset);
   }
-  for (const [name, category] of [...categories.children].sort(([left], [right]) => left.localeCompare(right))) {
-    assetNav.append(renderAssetCategory(name, category));
-  }
-  updateNavigationSelection();
+  return [...categories.children]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, category]) => renderAssetCategory(name, category));
 }
 
 function renderAssetCategory(name, category) {
@@ -522,12 +593,17 @@ function renderAssetCategory(name, category) {
   for (const asset of categoryAssets) {
     const button = element("button", "asset-row");
     const assetName = asset.data.name || asset.id;
+    const targetScreen = screens[activeScreenIndex];
+    const requiresRootLayout = targetScreen?.data.assets?.length === 0;
+    const canDrag = Boolean(targetScreen) && (!requiresRootLayout || Boolean(asset.data.slots?.length));
     button.type = "button";
     button.dataset.assetId = asset.id;
-    button.draggable = screens.length > 0;
+    button.draggable = canDrag;
     button.setAttribute(
       "aria-label",
-      `Edit ${assetName} template; drag to add to ${screens[activeScreenIndex]?.data.name || "current Screen"}`
+      canDrag
+        ? `Edit ${assetName} template; drag to add to ${targetScreen?.data.name || "current Screen"}`
+        : `Edit ${assetName} template; select a Screen to add it`
     );
     button.append(element("span", "asset-dot", assetName.slice(0, 1).toUpperCase()));
     button.append(element("span", "asset-name", assetName));
@@ -567,12 +643,8 @@ async function createScreen() {
   if (enteredName === null) return;
   const name = enteredName.trim();
   if (!name) {
-    showWorkflowOutput("Screen name required", "Enter a name before creating a Screen.");
+    showEditorMessage("Screen name required", "Enter a name before creating a Screen.");
     return;
-  }
-  const defaultLayout = assets.get("centered-form-layout");
-  if (!defaultLayout?.data.slots?.length) {
-    throw new Error('The project must define the "centered-form-layout" asset with at least one slot to create a Screen.');
   }
   const baseId = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "screen";
   let id;
@@ -588,12 +660,10 @@ async function createScreen() {
     if (!response.ok) throw new Error(`Could not check Screen file "${file}" (HTTP ${response.status}).`);
   }
 
-  const rootLayout = createAssetInstance(defaultLayout, []);
-  rootLayout.slots = Object.fromEntries(defaultLayout.data.slots.map((slot) => [slot.id, []]));
   const screen = {
     id,
     file,
-    data: { name, description: "", assets: [rootLayout] }
+    data: { name, description: "", assets: [] }
   };
   screens.push(screen);
   project.screens.push({ id, file });
@@ -602,9 +672,7 @@ async function createScreen() {
   markEdited("project.yml");
   activeScreenIndex = screens.length - 1;
   renderNavigation();
-  renderScreen(activeScreenIndex)
-    .then(() => selectInstance([0], defaultLayout.id))
-    .catch(showFatalError);
+  renderScreen(activeScreenIndex).catch(showFatalError);
 }
 
 function createAssetInstance(template, siblings) {
@@ -625,6 +693,82 @@ function createAssetInstance(template, siblings) {
   };
   if (template.data.slots) instance.slots = {};
   return instance;
+}
+
+async function ensureAssetOnScreen(template, screen) {
+  if (!template.screen || template.screen === screen.id) return template;
+  const existingEntry = project.assets.find((entry) =>
+    entry.screen === screen.id && entry["copied-from"] === template.id
+  );
+  if (existingEntry) {
+    const existingCopy = assets.get(existingEntry.id);
+    if (!existingCopy) {
+      throw new Error(`Copied asset "${existingEntry.id}" is not available in this project.`);
+    }
+    return existingCopy;
+  }
+
+  const baseId = `${screen.id}-${template.id}`;
+  let id;
+  let directory;
+  for (let suffix = 1; ; suffix += 1) {
+    id = suffix === 1 ? baseId : `${baseId}-${suffix}`;
+    directory = `assets/${id}`;
+    if (project.assets.some((entry) => entry.id === id || entry.directory === directory)) continue;
+    const response = await fetch(safeProjectUrl(`${directory}/asset.yml`));
+    if (response.status === 404) break;
+    if (!response.ok) {
+      throw new Error(`Could not check asset directory "${directory}" (HTTP ${response.status}).`);
+    }
+  }
+
+  const data = JSON.parse(JSON.stringify(template.data));
+  data.id = id;
+  const yamlResponse = await fetch("/api/yaml/stringify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data })
+  });
+  const yamlResult = await yamlResponse.json();
+  if (!yamlResponse.ok) {
+    throw new Error(yamlResult.error || `Could not prepare copied asset YAML (HTTP ${yamlResponse.status}).`);
+  }
+
+  const relativeHtmlPath = template.htmlFile.slice(template.directory.length + 1);
+  const copy = {
+    ...template,
+    id,
+    screen: screen.id,
+    copiedFrom: template.id,
+    directory,
+    base: safeProjectUrl(`${directory}/`),
+    data,
+    htmlFile: `${directory}/${relativeHtmlPath}`,
+    yamlSource: yamlResult.source,
+    yamlSourceMode: "source",
+    yamlParseVersion: 0,
+    yamlSerializeVersion: 0
+  };
+  const entry = {
+    id,
+    directory,
+    screen: screen.id,
+    "copied-from": template.id
+  };
+  assets.set(id, copy);
+  project.assets.push(entry);
+  pendingAssetCopies.push({
+    sourceId: template.id,
+    sourceDirectory: template.directory,
+    targetId: id,
+    targetDirectory: directory,
+    targetScreen: screen.id
+  });
+  markEdited("project.yml");
+  markEdited(`${directory}/asset.yml`);
+  markEdited(copy.htmlFile);
+  renderNavigation();
+  return copy;
 }
 
 function getInstanceAtPath(screen, path) {
@@ -685,16 +829,17 @@ function instancePathFor(parentPath, slotId, index) {
 
 async function addAssetToContainer(assetId, parentPath, slotId, requestedIndex = null) {
   const screen = screens[activeScreenIndex];
-  const template = assets.get(assetId);
+  const sourceTemplate = assets.get(assetId);
   if (!screen) throw new Error("Select a Screen before adding an asset.");
-  if (!template) throw new Error(`Asset template "${assetId}" is not available.`);
-  if (!parentPath.length && (!template.data.slots || slotId !== null)) {
+  if (!sourceTemplate) throw new Error(`Asset template "${assetId}" is not available.`);
+  if (!parentPath.length && (!sourceTemplate.data.slots || slotId !== null)) {
     throw new Error("A Screen's single root asset must be a layout. Drop content assets into its named slot.");
   }
   const instances = getSiblingList(screen, parentPath, slotId);
   if (!parentPath.length && instances.length > 0) {
     throw new Error("A Screen can contain only one root layout asset.");
   }
+  const template = await ensureAssetOnScreen(sourceTemplate, screen);
   const index = requestedIndex === null
     ? instances.length
     : Math.max(0, Math.min(requestedIndex, instances.length));
@@ -703,7 +848,7 @@ async function addAssetToContainer(assetId, parentPath, slotId, requestedIndex =
   markEdited(screens[activeScreenIndex].file);
   await renderScreen(activeScreenIndex);
   const addedPath = instancePathFor(parentPath, slotId, index);
-  selectInstance(addedPath, assetId);
+  selectInstance(addedPath, template.id);
   const addedInstance = findAssetInstances(byId("screen-preview"))
     .find((node) => node.dataset.instancePath === JSON.stringify(addedPath));
   addedInstance?.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -711,30 +856,31 @@ async function addAssetToContainer(assetId, parentPath, slotId, requestedIndex =
 
 async function addAssetToScreen(assetId) {
   const screen = screens[activeScreenIndex];
-  const template = assets.get(assetId);
+  const sourceTemplate = assets.get(assetId);
   if (!screen) throw new Error("Select a Screen before adding an asset.");
-  if (!template) throw new Error(`Asset template "${assetId}" is not available.`);
+  if (!sourceTemplate) throw new Error(`Asset template "${assetId}" is not available.`);
   const rootAssets = screen.data.assets;
   if (!Array.isArray(rootAssets)) throw new Error(`Screen "${screen.id}" assets must be a list.`);
 
-  if (template.data.slots) {
+  if (sourceTemplate.data.slots) {
     if (rootAssets.length === 0) {
       return addAssetToContainer(assetId, [], null);
     }
     if (rootAssets.length !== 1) {
       throw new Error("Fix this Screen so it has exactly one root layout before changing its layout.");
     }
-    if (rootAssets[0]["asset-template"] === assetId) return;
     const hasChildren = Object.values(rootAssets[0].slots || {})
       .some((children) => !Array.isArray(children) || children.length > 0);
     if (hasChildren) {
       throw new Error("Move or delete the current layout's content before replacing its root layout.");
     }
+    const template = await ensureAssetOnScreen(sourceTemplate, screen);
+    if (rootAssets[0]["asset-template"] === template.id) return;
     rootAssets[0] = createAssetInstance(template, []);
     rootAssets[0].slots = Object.fromEntries(template.data.slots.map((slot) => [slot.id, []]));
     markEdited(screen.file);
     await renderScreen(activeScreenIndex);
-    selectInstance([0], assetId);
+    selectInstance([0], template.id);
     return;
   }
 
@@ -744,7 +890,7 @@ async function addAssetToScreen(assetId) {
   const rootTemplate = assets.get(rootAssets[0]["asset-template"]);
   const slots = rootTemplate?.data.slots || [];
   if (slots.length !== 1) {
-    throw new Error(`Drag ${template.data.name || assetId} into the intended named slot.`);
+    throw new Error(`Drag ${sourceTemplate.data.name || assetId} into the intended named slot.`);
   }
   return addAssetToContainer(assetId, [0], slots[0].id);
 }
@@ -848,11 +994,6 @@ function clearDropIndicators() {
   }
 }
 
-function clearWorkflowDiagramResizeObserver() {
-  workflowDiagramResizeObserver?.disconnect();
-  workflowDiagramResizeObserver = null;
-}
-
 function findAssetInstances(root, instances = []) {
   for (const node of root.querySelectorAll(".asset-instance")) {
     instances.push(node);
@@ -882,7 +1023,7 @@ screenStage.addEventListener("drop", (event) => {
   if (sourcePath) {
     moveAssetInstance(sourcePath, [], null).catch(showAddAssetError);
   } else if (!assets.has(assetId)) {
-    showWorkflowOutput("Could not add asset", `Asset template "${assetId}" is not available in this project.`);
+    showEditorMessage("Could not add asset", `Asset template "${assetId}" is not available in this project.`);
   } else {
     paletteAssetDropHandled = true;
     addAssetToScreen(assetId).catch(showAddAssetError);
@@ -890,41 +1031,38 @@ screenStage.addEventListener("drop", (event) => {
 });
 
 function showAddAssetError(error) {
-  showWorkflowOutput("Could not add asset", error.message || String(error));
+  showEditorMessage("Could not add asset", error.message || String(error));
 }
 
 async function renderScreen(index) {
   const selected = screens[index];
   if (!selected) return;
-  clearWorkflowDiagramResizeObserver();
   closeAssetContextMenu();
   clearTimeout(assetPreviewTimer);
   assetPreviewTimer = null;
   assetPreviewVersion += 1;
   byId("main").classList.remove("asset-editing");
-  byId("main").classList.remove("workflow-editing");
+  byId("main").classList.remove("spec-editing");
   byId("asset-html-editor-panel").hidden = true;
   byId("asset-html-source").oninput = null;
   byId("asset-yaml-editor-panel").hidden = true;
   byId("asset-yaml-source").oninput = null;
-  byId("workflow-yaml-editor-panel").hidden = true;
-  byId("workflow-yaml-source").oninput = null;
+  byId("spec-editor-panel").hidden = true;
+  byId("spec-source").oninput = null;
   activeScreenIndex = index;
   viewingAssetTemplate = false;
   viewingTheme = false;
   viewingProject = false;
-  viewingWorkflow = false;
-  activeWorkflowId = null;
-  activeWorkflowStepId = null;
+  viewingSpec = false;
+  activeSpecPath = null;
+  activeSpecInstancePath = [];
   activeAssetId = null;
   activeInstancePath = [];
-  hideWorkflowOutput();
+  hideEditorMessage();
   updateNavigationSelection();
   updateScreenDomContext(selected);
-  byId("screen-stage").setAttribute("aria-label", "Rendered Screen preview; drop an asset here to add it");
   byId("screen-heading").textContent = selected.data.name || selected.id;
   byId("breadcrumb").textContent = "Screens";
-  byId("theme-chip").textContent = currentThemeLabel();
 
   const preview = byId("screen-preview");
   preview.className = "screen-preview";
@@ -935,7 +1073,20 @@ async function renderScreen(index) {
   preview.append(content);
 
   try {
-    if (!Array.isArray(selected.data.assets) || selected.data.assets.length !== 1) {
+    if (!Array.isArray(selected.data.assets)) {
+      throw new Error(`Screen "${selected.id}" assets must be a list.`);
+    }
+    if (selected.data.assets.length === 0) {
+      byId("screen-stage").setAttribute("aria-label", "Empty Screen preview; drop a layout asset here");
+      const dropZone = element("div", "empty-screen-drop-zone", "Drop a layout asset here");
+      dropZone.setAttribute("role", "group");
+      dropZone.setAttribute("aria-label", "Drop a layout asset here to create the Screen root");
+      content.append(dropZone);
+      renderInspector();
+      return;
+    }
+    byId("screen-stage").setAttribute("aria-label", "Rendered Screen preview; drop an asset here to add it");
+    if (selected.data.assets.length !== 1) {
       throw new Error(`Screen "${selected.id}" must contain exactly one root layout asset.`);
     }
     const instance = selected.data.assets[0];
@@ -961,30 +1112,189 @@ async function renderScreen(index) {
   }
 }
 
+async function renderSpecEditor(filePath, instancePath = activeInstancePath, owner = "instance") {
+  sharedValidation.validateSpecPath(filePath);
+  const screen = screens[activeScreenIndex];
+  const draft = createdSpecDrafts.get(filePath);
+  const isProjectSpec = owner === "project";
+  const instance = !isProjectSpec && screen ? getInstanceAtPath(screen, instancePath) : null;
+  if (isProjectSpec
+    ? project.spec !== filePath && draft?.owner !== "project"
+    : !instance || (instance.spec !== filePath && draft?.owner !== "instance")) {
+    throw new Error(`Behavior spec "${filePath}" is not attached to the project or selected asset instance.`);
+  }
+  if (!specSources.has(filePath)) specSources.set(filePath, await loadText(filePath));
+
+  byId("main").classList.remove("asset-editing");
+  byId("main").classList.add("spec-editing");
+  byId("asset-html-editor-panel").hidden = true;
+  byId("asset-html-source").oninput = null;
+  byId("asset-yaml-editor-panel").hidden = true;
+  byId("asset-yaml-source").oninput = null;
+  byId("spec-editor-panel").hidden = false;
+  viewingAssetTemplate = false;
+  viewingTheme = false;
+  viewingProject = false;
+  viewingSpec = true;
+  activeSpecPath = filePath;
+  activeSpecOwner = owner;
+  activeSpecInstancePath = isProjectSpec ? [] : [...instancePath];
+  activeAssetId = instance?.["asset-template"] || null;
+  activeInstancePath = isProjectSpec ? [] : [...instancePath];
+  hideEditorMessage();
+  updateNavigationSelection();
+  byId("screen-stage").setAttribute(
+    "aria-label",
+    isProjectSpec ? "Project overview linked to its behavior spec" : "Screen preview linked to the selected behavior spec"
+  );
+  byId("screen-heading").textContent = `Spec: ${filePath}`;
+  byId("breadcrumb").textContent = "Behavior spec";
+  byId("spec-editor-heading").textContent = filePath;
+  const editor = byId("spec-source");
+  editor.setAttribute("aria-label", `Markdown source for ${filePath}`);
+  editor.value = specSources.get(filePath);
+  editor.disabled = isSaving;
+  byId("spec-status").textContent = draft
+    ? createdSpecFiles.has(filePath)
+      ? "Example edited; unsaved changes."
+      : "Example draft; it will not be saved unless edited."
+    : "";
+  byId("spec-status").classList.remove("error");
+  editor.oninput = () => {
+    const source = editor.value;
+    specSources.set(filePath, source);
+    const pendingDraft = createdSpecDrafts.get(filePath);
+    if (pendingDraft) {
+      const draftScreen = screens.find((entry) => entry.file === pendingDraft.screenFile);
+      const draftInstance = draftScreen && getInstanceAtPath(draftScreen, pendingDraft.instancePath);
+      if (source === pendingDraft.initialContent) {
+        if (pendingDraft.owner === "project") {
+          if (project.spec === filePath) delete project.spec;
+        } else if (draftInstance?.spec === filePath) {
+          delete draftInstance.spec;
+        }
+        createdSpecFiles.delete(filePath);
+        clearEdited(filePath);
+        byId("spec-status").textContent = "Example unchanged; no spec file will be saved.";
+        return;
+      }
+      if (pendingDraft.owner === "project") project.spec = filePath;
+      else if (draftInstance) draftInstance.spec = filePath;
+      createdSpecFiles.add(filePath);
+    }
+    markEdited(filePath);
+    byId("spec-status").textContent = pendingDraft
+      ? "Example edited; unsaved changes."
+      : "Unsaved Markdown changes.";
+  };
+  renderInspector();
+}
+
+async function createSpecForInstance(instancePath) {
+  const screen = screens[activeScreenIndex];
+  const instance = screen && getInstanceAtPath(screen, instancePath);
+  const template = instance && assets.get(instance["asset-template"]);
+  if (!screen || !instance || !template) throw new Error("The selected asset instance is no longer available.");
+  if (instance.spec) {
+    await renderSpecEditor(instance.spec, instancePath);
+    return;
+  }
+  const pendingDraft = [...createdSpecDrafts.entries()].find(([, draft]) =>
+    draft.screenFile === screen.file && sameInstancePath(draft.instancePath, instancePath)
+  );
+  if (pendingDraft) {
+    await renderSpecEditor(pendingDraft[0], instancePath);
+    return;
+  }
+  const pathSegment = instancePath.map((part) =>
+    typeof part === "number" ? String(part) : part
+  ).join("-");
+  const baseName = `${screen.id}-${pathSegment}-${template.id}`;
+  let filePath;
+  for (let suffix = 1; ; suffix += 1) {
+    const name = suffix === 1 ? baseName : `${baseName}-${suffix}`;
+    filePath = `specs/${name}.md`;
+    sharedValidation.validateSpecPath(filePath);
+    if (specSources.has(filePath)) continue;
+    const response = await fetch(safeProjectUrl(filePath));
+    if (response.status === 404) break;
+    if (!response.ok) {
+      throw new Error(`Could not check whether behavior spec "${filePath}" already exists (HTTP ${response.status}).`);
+    }
+  }
+  const heading = (instance.name || template.data.name || template.id)
+    .replace(/\r?\n/g, " ")
+    .trim() || template.id;
+  const source = `# ${heading}\n\n## Purpose\n\nDescribe the behavior this asset instance is responsible for.\n\n## Requirements\n\n### Requirement: Perform the intended action\nThe system SHALL perform the intended behavior for this asset instance.\n\n#### Scenario: User interacts with this instance\n- **WHEN** the user interacts with this instance\n- **THEN** describe the expected observable outcome.\n`;
+  specSources.set(filePath, source);
+  createdSpecDrafts.set(filePath, {
+    owner: "instance",
+    initialContent: source,
+    screenFile: screen.file,
+    instancePath: [...instancePath]
+  });
+  await renderSpecEditor(filePath, instancePath);
+}
+
+async function createProjectSpec() {
+  if (project.spec) {
+    await renderSpecEditor(project.spec, [], "project");
+    return;
+  }
+  const pendingDraft = [...createdSpecDrafts.entries()].find(([, draft]) => draft.owner === "project");
+  if (pendingDraft) {
+    await renderSpecEditor(pendingDraft[0], [], "project");
+    return;
+  }
+
+  let filePath;
+  for (let suffix = 1; ; suffix += 1) {
+    const name = suffix === 1 ? "project-behavior" : `project-behavior-${suffix}`;
+    filePath = `specs/${name}.md`;
+    sharedValidation.validateSpecPath(filePath);
+    if (specSources.has(filePath)) continue;
+    const response = await fetch(safeProjectUrl(filePath));
+    if (response.status === 404) break;
+    if (!response.ok) {
+      throw new Error(`Could not check whether behavior spec "${filePath}" already exists (HTTP ${response.status}).`);
+    }
+  }
+  const heading = (typeof project.name === "string" && project.name.trim())
+    ? project.name.replace(/\r?\n/g, " ").trim()
+    : "Project behavior";
+  const source = `# ${heading}\n\n## Purpose\n\nDescribe the behavior and constraints shared across this project.\n\n## Requirements\n\n### Requirement: Follow project-wide behavior\nThe system SHALL follow the behavior specified for this project.\n\n#### Scenario: A project-wide behavior applies\n- **WHEN** a user action is covered by this requirement\n- **THEN** the application follows the specified project-wide behavior.\n`;
+  specSources.set(filePath, source);
+  createdSpecDrafts.set(filePath, {
+    owner: "project",
+    initialContent: source,
+    projectFile: "project.yml"
+  });
+  await renderSpecEditor(filePath, [], "project");
+}
+
 function renderProjectOverview() {
   if (!project) return;
-  clearWorkflowDiagramResizeObserver();
   closeAssetContextMenu();
   clearTimeout(assetPreviewTimer);
   assetPreviewTimer = null;
   assetPreviewVersion += 1;
   byId("main").classList.remove("asset-editing");
-  byId("main").classList.remove("workflow-editing");
+  byId("main").classList.remove("spec-editing");
   byId("asset-html-editor-panel").hidden = true;
   byId("asset-html-source").oninput = null;
   byId("asset-yaml-editor-panel").hidden = true;
   byId("asset-yaml-source").oninput = null;
-  byId("workflow-yaml-editor-panel").hidden = true;
-  byId("workflow-yaml-source").oninput = null;
+  byId("spec-editor-panel").hidden = true;
+  byId("spec-source").oninput = null;
   viewingAssetTemplate = false;
   viewingTheme = false;
   viewingProject = true;
-  viewingWorkflow = false;
-  activeWorkflowId = null;
-  activeWorkflowStepId = null;
+  viewingSpec = false;
+  activeSpecPath = null;
+  activeSpecInstancePath = [];
   activeAssetId = null;
   activeInstancePath = [];
-  hideWorkflowOutput();
+  hideEditorMessage();
   updateNavigationSelection();
   updateScreenDomContext(null);
   byId("screen-stage").setAttribute("aria-label", "Project overview");
@@ -1008,7 +1318,7 @@ function renderProjectOverview() {
   for (const [label, value] of [
     ["Screens", screens.length],
     ["Asset templates", assets.size],
-    ["Workflows", workflows.size]
+    ["Behavior specs", specSources.size]
   ]) {
     const stat = element("div", "project-overview-stat");
     stat.append(element("span", "project-overview-stat-label", label));
@@ -1047,31 +1357,15 @@ function renderProjectOverview() {
   configuration.append(element("h3", "project-overview-section-title", "Project configuration"));
   configuration.append(element("div", "project-overview-config-label", "Theme"));
   configuration.append(element("div", "project-overview-config-value", theme?.name || "Not configured"));
-  configuration.append(element("div", "project-overview-config-label", "Workflows"));
-  const workflowList = element("div", "project-overview-workflow-list");
-  if (workflows.size) {
-    for (const [id, workflow] of workflows) {
-      const workflowItem = element("button", "project-overview-workflow");
-      workflowItem.type = "button";
-      workflowItem.setAttribute("aria-label", `Edit workflow ${workflow.data.name || id}`);
-      workflowItem.append(
-        element("span", "project-overview-workflow-name", workflow.data.name || id),
-        element("span", "project-overview-workflow-id", id)
-      );
-      workflowItem.addEventListener("click", () => renderWorkflowEditor(id));
-      workflowList.append(workflowItem);
-    }
-  } else {
-    workflowList.append(element("span", "project-overview-workflow-id", "No workflows defined."));
-  }
-  configuration.append(workflowList);
+  configuration.append(element("div", "project-overview-config-label", "Behavior specs"));
+  configuration.append(element("div", "project-overview-config-value", `${specSources.size} attached`));
   configuration.append(element("div", "project-overview-config-label", "Project manifest"));
   configuration.append(element("div", "project-overview-config-value", "openux/project.yml"));
   configuration.append(element("div", "project-overview-config-label", "Source of truth"));
   configuration.append(element(
     "p",
     "project-overview-config-note",
-    "OpenUX project files define the Screens, assets, Theme, and Workflows used by this Studio."
+    "OpenUX project files define the Screens, assets, Theme, and instance-linked behavior specs used by this Studio."
   ));
   sections.append(configuration);
   content.append(sections);
@@ -1079,696 +1373,25 @@ function renderProjectOverview() {
   renderInspector();
 }
 
-function renderWorkflowEditor(workflowId) {
-  const workflow = workflows.get(workflowId);
-  if (!workflow) return;
-  const switchingWorkflow = activeWorkflowId !== workflowId;
-  closeAssetContextMenu();
-  clearTimeout(assetPreviewTimer);
-  assetPreviewTimer = null;
-  assetPreviewVersion += 1;
-  byId("main").classList.remove("asset-editing");
-  byId("main").classList.add("workflow-editing");
-  byId("asset-html-editor-panel").hidden = true;
-  byId("asset-html-source").oninput = null;
-  byId("asset-yaml-editor-panel").hidden = true;
-  byId("asset-yaml-source").oninput = null;
-  byId("workflow-yaml-editor-panel").hidden = false;
-  viewingAssetTemplate = false;
-  viewingTheme = false;
-  viewingProject = false;
-  viewingWorkflow = true;
-  activeAssetId = null;
-  activeInstancePath = [];
-  activeWorkflowId = workflowId;
-  if (switchingWorkflow || !workflow.data.steps?.some((step) => step.id === activeWorkflowStepId)) {
-    activeWorkflowStepId = workflow.data.entry || workflow.data.steps?.[0]?.id || null;
-  }
-  hideWorkflowOutput();
-  updateNavigationSelection();
-  updateScreenDomContext(null);
-  byId("screen-stage").setAttribute("aria-label", `Workflow diagram for ${workflow.data.name || workflowId}`);
-  byId("screen-heading").textContent = workflow.data.name || workflowId;
-  byId("breadcrumb").textContent = "Workflows";
-  const preview = byId("screen-preview");
-  preview.className = "screen-preview workflow-preview";
-  preview.setAttribute("aria-label", `Workflow diagram for ${workflow.data.name || workflowId}`);
-  byId("workflow-yaml-source").setAttribute(
-    "aria-label",
-    `YAML source for workflow ${workflow.data.name || workflowId}`
-  );
-  byId("workflow-yaml-source").value = workflow.yamlSource;
-  byId("workflow-yaml-status").textContent = workflow.yamlStatus.message;
-  byId("workflow-yaml-status").classList.toggle("error", workflow.yamlStatus.isError);
-  byId("workflow-yaml-source").oninput = () => editWorkflowYaml(workflow);
-  renderWorkflowDiagram(workflow);
-  renderInspector();
-}
-
-function renderWorkflowDiagram(workflow) {
-  clearWorkflowDiagramResizeObserver();
-  const preview = byId("screen-preview");
-  preview.replaceChildren();
-  try {
-    validateWorkflow(workflow.data, workflow.id);
-  } catch (error) {
-    preview.append(element("div", "workflow-diagram-error", error.message || String(error)));
-    return;
-  }
-
-  const stepLayers = new Map([[workflow.data.entry, 0]]);
-  const pendingSteps = [workflow.data.entry];
-  for (let index = 0; index < pendingSteps.length; index += 1) {
-    const step = workflow.data.steps.find((entry) => entry.id === pendingSteps[index]);
-    const nextLayer = stepLayers.get(step.id) + 1;
-    for (const transition of step.transitions) {
-      if (transition.next && !stepLayers.has(transition.next)) {
-        stepLayers.set(transition.next, nextLayer);
-        pendingSteps.push(transition.next);
-      }
-    }
-  }
-  const lastReachableLayer = Math.max(...stepLayers.values());
-  for (const step of workflow.data.steps) {
-    if (!stepLayers.has(step.id)) stepLayers.set(step.id, lastReachableLayer + 1);
-  }
-  const maxStepLayer = Math.max(...stepLayers.values());
-  const stepRows = new Map();
-  for (const step of workflow.data.steps) {
-    const layer = stepLayers.get(step.id);
-    if (!stepRows.has(layer)) stepRows.set(layer, []);
-    stepRows.get(layer).push(step);
-  }
-  const originalStepOrder = new Map(workflow.data.steps.map((step, index) => [step.id, index]));
-  const average = (values) => values.length
-    ? values.reduce((total, value) => total + value, 0) / values.length
-    : null;
-  for (let pass = 0; pass < 4; pass += 1) {
-    for (let layer = 1; layer <= maxStepLayer; layer += 1) {
-      const neighbors = stepRows.get(layer - 1) || [];
-      const neighborOrder = new Map(neighbors.map((step, index) => [step.id, index]));
-      const row = stepRows.get(layer);
-      const previousOrder = new Map(row.map((step, index) => [step.id, index]));
-      const barycenter = (step) => {
-        const parents = neighbors.flatMap((parent) =>
-          parent.transitions
-            .filter((transition) => transition.next === step.id)
-            .map(() => neighborOrder.get(parent.id))
-        );
-        return average(parents) ?? previousOrder.get(step.id);
-      };
-      row.sort((left, right) =>
-        barycenter(left) - barycenter(right) ||
-        originalStepOrder.get(left.id) - originalStepOrder.get(right.id)
-      );
-    }
-    for (let layer = maxStepLayer - 1; layer >= 0; layer -= 1) {
-      const neighbors = stepRows.get(layer + 1) || [];
-      const neighborOrder = new Map(neighbors.map((step, index) => [step.id, index]));
-      const row = stepRows.get(layer);
-      const previousOrder = new Map(row.map((step, index) => [step.id, index]));
-      const barycenter = (step) => {
-        const children = step.transitions
-          .filter((transition) => neighborOrder.has(transition.next))
-          .map((transition) => neighborOrder.get(transition.next));
-        return average(children) ?? previousOrder.get(step.id);
-      };
-      row.sort((left, right) =>
-        barycenter(left) - barycenter(right) ||
-        originalStepOrder.get(left.id) - originalStepOrder.get(right.id)
-      );
-    }
-  }
-
-  const destinations = new Map();
-  for (const step of workflow.data.steps) {
-    for (const [transitionIndex, transition] of step.transitions.entries()) {
-      if (transition.next) continue;
-      const key = transition.to ? `screen:${transition.to}` : `result:${step.id}:${transitionIndex}`;
-      if (!destinations.has(key)) {
-        destinations.set(key, {
-          key,
-          kind: transition.to ? "screen" : "result",
-          id: transition.to || transition.result,
-          label: transition.to
-            ? screens.find((screen) => screen.id === transition.to)?.data.name || transition.to
-            : transition.result
-        });
-      }
-    }
-  }
-  const nodeWidth = 250;
-  const stepHeight = 154;
-  const destinationHeight = 120;
-  const horizontalGap = 52;
-  const rowSpacing = 226;
-  const margin = 36;
-  const destinationLayer = maxStepLayer + 1;
-  const bypassSides = new Map();
-  let leftBypassCount = 0;
-  let rightBypassCount = 0;
-  for (const step of workflow.data.steps) {
-    const sourceLayer = stepLayers.get(step.id);
-    const row = stepRows.get(sourceLayer);
-    const sourceIndex = row.findIndex((entry) => entry.id === step.id);
-    for (const [transitionIndex, transition] of step.transitions.entries()) {
-      const targetLayer = transition.next ? stepLayers.get(transition.next) : destinationLayer;
-      if (targetLayer === sourceLayer + 1) continue;
-      const side = sourceIndex < row.length / 2 ? "left" : "right";
-      if (!bypassSides.has(step.id)) bypassSides.set(step.id, new Map());
-      bypassSides.get(step.id).set(transitionIndex, side);
-      if (side === "left") leftBypassCount += 1;
-      else rightBypassCount += 1;
-    }
-  }
-  const rowWidth = (count) => count * nodeWidth + Math.max(0, count - 1) * horizontalGap;
-  const contentWidth = Math.max(
-    ...[...stepRows.values()].map((steps) => rowWidth(steps.length)),
-    rowWidth(destinations.size)
-  );
-  const leftBypassGutter = leftBypassCount ? 250 + leftBypassCount * 14 : 0;
-  const rightBypassGutter = rightBypassCount ? 250 + rightBypassCount * 14 : 0;
-  const contentStart = margin + leftBypassGutter;
-  const contentEnd = contentStart + contentWidth;
-  const width = margin + leftBypassGutter + contentWidth + rightBypassGutter + margin;
-  const stepPositions = new Map();
-  for (const [layer, steps] of stepRows) {
-    const rowStart = contentStart + (contentWidth - rowWidth(steps.length)) / 2;
-    steps.forEach((step, index) => {
-      stepPositions.set(step.id, {
-        x: rowStart + index * (nodeWidth + horizontalGap),
-        y: margin + layer * rowSpacing,
-        width: nodeWidth,
-        height: stepHeight,
-        layer
-      });
-    });
-  }
-
-  const destinationPositions = new Map();
-  const destinationList = [...destinations.values()];
-  const originalDestinationOrder = new Map(destinationList.map((destination, index) => [destination.key, index]));
-  const destinationBarycenter = (destination) => {
-    const sourceCenters = [];
-    for (const step of workflow.data.steps) {
-      for (const [transitionIndex, transition] of step.transitions.entries()) {
-        const key = transition.to
-          ? `screen:${transition.to}`
-          : `result:${step.id}:${transitionIndex}`;
-        if (key === destination.key) {
-          sourceCenters.push(stepPositions.get(step.id).x + nodeWidth / 2);
-        }
-      }
-    }
-    return average(sourceCenters) ?? originalDestinationOrder.get(destination.key);
-  };
-  destinationList.sort((left, right) =>
-    destinationBarycenter(left) - destinationBarycenter(right) ||
-    originalDestinationOrder.get(left.key) - originalDestinationOrder.get(right.key)
-  );
-  const destinationStart = contentStart + (contentWidth - rowWidth(destinationList.length)) / 2;
-  destinationList.forEach((destination, index) => {
-    destinationPositions.set(destination.key, {
-      x: destinationStart + index * (nodeWidth + horizontalGap),
-      y: margin + destinationLayer * rowSpacing,
-      width: nodeWidth,
-      height: destinationHeight,
-      layer: destinationLayer
-    });
-  });
-
-  const height = margin * 2 + maxStepLayer * rowSpacing +
-    (destinations.size ? destinationHeight : stepHeight);
-  const diagram = element("div", "workflow-diagram-scroll");
-  const canvas = element("div", "workflow-diagram");
-  canvas.style.width = `${width}px`;
-  canvas.style.height = `${height}px`;
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.classList.add("workflow-diagram-edges");
-  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.setAttribute("width", String(width));
-  svg.setAttribute("height", String(height));
-  svg.setAttribute("aria-hidden", "true");
-  const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-  const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
-  marker.id = "workflow-arrow";
-  marker.setAttribute("markerWidth", "10");
-  marker.setAttribute("markerHeight", "10");
-  marker.setAttribute("refX", "8");
-  marker.setAttribute("refY", "5");
-  marker.setAttribute("orient", "auto");
-  marker.setAttribute("markerUnits", "strokeWidth");
-  const arrow = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  arrow.setAttribute("d", "M0,0 L0,10 L9,5 z");
-  arrow.classList.add("workflow-edge-arrow");
-  marker.append(arrow);
-  defs.append(marker);
-  const selectedMarker = marker.cloneNode(true);
-  selectedMarker.id = "workflow-arrow-selected";
-  selectedMarker.querySelector("path").classList.add("workflow-edge-arrow-selected");
-  defs.append(selectedMarker);
-  svg.append(defs);
-
-  let leftBypassIndex = 0;
-  let rightBypassIndex = 0;
-  const leftLaneBase = contentStart - 18;
-  const rightLaneBase = contentEnd + 18;
-  const leftLabelX = leftLaneBase - Math.max(0, leftBypassCount - 1) * 14 - 8;
-  const rightLabelX = rightLaneBase + Math.max(0, rightBypassCount - 1) * 14 + 8;
-  for (const step of workflow.data.steps) {
-    const source = stepPositions.get(step.id);
-    for (const [transitionIndex, transition] of step.transitions.entries()) {
-      const targetPosition = transition.next
-        ? stepPositions.get(transition.next)
-        : destinationPositions.get(transition.to
-          ? `screen:${transition.to}`
-          : `result:${step.id}:${transitionIndex}`);
-      if (!targetPosition) continue;
-      const targetLayer = transition.next
-        ? stepLayers.get(transition.next)
-        : destinationLayer;
-      const isAdjacentForward = targetLayer === source.layer + 1;
-      const selected = step.id === activeWorkflowStepId;
-      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.classList.add("workflow-edge");
-      path.classList.toggle("selected", selected);
-      let labelX;
-      let labelY;
-      let labelAnchor;
-      if (isAdjacentForward) {
-        const sourceX = source.x + source.width / 2;
-        const sourceY = source.y + source.height;
-        const targetX = targetPosition.x + targetPosition.width / 2;
-        const targetY = targetPosition.y - 10;
-        path.setAttribute(
-          "d",
-          `M ${sourceX} ${sourceY} C ${sourceX} ${sourceY + 36}, ${targetX} ${targetY - 36}, ${targetX} ${targetY}`
-        );
-        labelX = (sourceX + targetX) / 2;
-        labelY = (sourceY + targetY) / 2;
-      } else {
-        const sourceY = source.y + source.height / 2;
-        const targetY = targetPosition.y + targetPosition.height / 2;
-        const side = bypassSides.get(step.id).get(transitionIndex);
-        if (side === "left") {
-          const laneX = leftLaneBase - leftBypassIndex * 14;
-          const sourceX = source.x;
-          const targetX = targetPosition.x - 10;
-          path.setAttribute(
-            "d",
-            `M ${sourceX} ${sourceY} C ${laneX} ${sourceY}, ${laneX} ${targetY}, ${targetX} ${targetY}`
-          );
-          labelX = leftLabelX;
-          labelAnchor = "end";
-          leftBypassIndex += 1;
-        } else {
-          const laneX = rightLaneBase + rightBypassIndex * 14;
-          const sourceX = source.x + source.width;
-          const targetX = targetPosition.x + targetPosition.width + 10;
-          path.setAttribute(
-            "d",
-            `M ${sourceX} ${sourceY} C ${laneX} ${sourceY}, ${laneX} ${targetY}, ${targetX} ${targetY}`
-          );
-          labelX = rightLabelX;
-          labelAnchor = "start";
-          rightBypassIndex += 1;
-        }
-        labelY = (sourceY + targetY) / 2;
-      }
-      path.setAttribute(
-        "marker-end",
-        `url(#workflow-arrow${selected ? "-selected" : ""})`
-      );
-      svg.append(path);
-
-      const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      label.classList.add("workflow-edge-label");
-      label.classList.toggle("selected", selected);
-      label.setAttribute("x", String(labelX));
-      label.setAttribute(
-        "y",
-        String(labelY - 5 + (transitionIndex - (step.transitions.length - 1) / 2) * 12)
-      );
-      if (labelAnchor) label.setAttribute("text-anchor", labelAnchor);
-      label.textContent = transition.when.length > 34
-        ? `${transition.when.slice(0, 31)}...`
-        : transition.when;
-      svg.append(label);
-    }
-  }
-  canvas.append(svg);
-
-  for (const step of workflow.data.steps) {
-    const position = stepPositions.get(step.id);
-    const node = element("button", "workflow-diagram-node workflow-step-node");
-    node.type = "button";
-    node.style.left = `${position.x}px`;
-    node.style.top = `${position.y}px`;
-    node.style.width = `${position.width}px`;
-    node.style.height = `${position.height}px`;
-    node.classList.toggle("selected", step.id === activeWorkflowStepId);
-    node.setAttribute("aria-pressed", String(step.id === activeWorkflowStepId));
-    node.setAttribute("aria-label", `Edit workflow step ${step.id}`);
-    node.title = step.description || step.id;
-    if (workflow.data.entry === step.id) node.append(element("span", "workflow-node-entry", "ENTRY"));
-    node.append(element("strong", "workflow-node-title", step.id));
-    node.append(element("span", "workflow-node-description", step.description || "No step description."));
-    const transitionList = element("span", "workflow-node-transition-count");
-    transitionList.textContent = `${step.transitions.length} transition${step.transitions.length === 1 ? "" : "s"}`;
-    node.append(transitionList);
-    node.addEventListener("click", () => {
-      activeWorkflowStepId = step.id;
-      renderWorkflowDiagram(workflow);
-      renderInspector();
-    });
-    canvas.append(node);
-  }
-
-  for (const destination of destinations.values()) {
-    const position = destinationPositions.get(destination.key);
-    const node = element(
-      "div",
-      `workflow-diagram-node ${destination.kind === "screen" ? "workflow-screen-node" : "workflow-result-node"}`
-    );
-    node.style.left = `${position.x}px`;
-    node.style.top = `${position.y}px`;
-    node.style.width = `${position.width}px`;
-    node.style.height = `${position.height}px`;
-    node.title = destination.label;
-    node.append(
-      element("span", "workflow-node-kind", destination.kind === "screen" ? "SCREEN" : "RESULT"),
-      element("strong", "workflow-node-title", destination.label)
-    );
-    if (destination.kind === "screen") node.append(element("span", "workflow-node-description", destination.id));
-    canvas.append(node);
-  }
-  diagram.append(canvas);
-  preview.append(diagram);
-  const fitDiagram = () => {
-    const availableWidth = diagram.clientWidth;
-    const availableHeight = diagram.clientHeight;
-    if (!availableWidth || !availableHeight) return;
-    const scale = Math.min(1, availableWidth / width, availableHeight / height);
-    canvas.style.transform = `scale(${scale})`;
-  };
-  fitDiagram();
-  workflowDiagramResizeObserver = new ResizeObserver(fitDiagram);
-  workflowDiagramResizeObserver.observe(diagram);
-  publishSelection();
-}
-
-function renderWorkflowDetails(panel) {
-  const workflow = workflows.get(activeWorkflowId);
-  if (!workflow) return;
-  appendSection(panel, "Workflow");
-  appendDetail(panel, "ID", workflow.id);
-  appendEditableField(panel, "Name", workflow.data.name || workflow.id, (value) => {
-    workflow.data.name = value;
-    byId("screen-heading").textContent = value || workflow.id;
-    markWorkflowEdited(workflow);
-    renderNavigation();
-    renderWorkflowDiagram(workflow);
-    renderInspector();
-  });
-  appendEditableField(panel, "Description", workflow.data.description || "", (value) => {
-    workflow.data.description = value;
-    markWorkflowEdited(workflow);
-  }, { multiline: true });
-  const stepIds = workflow.data.steps.map((step) => step.id);
-  appendEditableField(panel, "Entry step", workflow.data.entry, (value) => {
-    workflow.data.entry = value;
-    activeWorkflowStepId = value;
-    markWorkflowEdited(workflow);
-    renderWorkflowDiagram(workflow);
-    renderInspector();
-  }, { selectOptions: stepIds });
-
-  const addStep = element("button", "workflow-editor-action", "+ Add step");
-  addStep.type = "button";
-  addStep.addEventListener("click", () => addWorkflowStep(workflow));
-  panel.append(addStep);
-
-  const step = workflow.data.steps.find((entry) => entry.id === activeWorkflowStepId);
-  if (!step) return;
-  appendSection(panel, "Selected step");
-  appendEditableField(panel, "Step ID", step.id, (value) => {
-    const updatedId = value.trim();
-    if (!/^[a-z][a-z0-9-]*$/.test(updatedId)) {
-      showWorkflowOutput("Invalid step ID", "Use lowercase letters, numbers, and hyphens; the ID must start with a letter.");
-      renderInspector();
-      return;
-    }
-    if (workflow.data.steps.some((entry) => entry.id === updatedId && entry !== step)) {
-      showWorkflowOutput("Duplicate step ID", `A step named "${updatedId}" already exists.`);
-      renderInspector();
-      return;
-    }
-    const previousId = step.id;
-    step.id = updatedId;
-    if (workflow.data.entry === previousId) workflow.data.entry = updatedId;
-    for (const entry of workflow.data.steps) {
-      for (const transition of entry.transitions || []) {
-        if (transition.next === previousId) transition.next = updatedId;
-      }
-    }
-    activeWorkflowStepId = updatedId;
-    markWorkflowEdited(workflow);
-    renderWorkflowDiagram(workflow);
-    renderInspector();
-  });
-  appendEditableField(panel, "Description", step.description || "", (value) => {
-    step.description = value;
-    markWorkflowEdited(workflow);
-    renderWorkflowDiagram(workflow);
-  }, { multiline: true });
-
-  appendSection(panel, "Transitions");
-  step.transitions.forEach((transition, index) => renderWorkflowTransition(panel, workflow, step, transition, index));
-  const addTransition = element("button", "workflow-editor-action", "+ Add transition");
-  addTransition.type = "button";
-  addTransition.addEventListener("click", () => {
-    step.transitions.push({
-      when: "Describe a condition",
-      result: "Describe the outcome."
-    });
-    markWorkflowEdited(workflow);
-    renderWorkflowDiagram(workflow);
-    renderInspector();
-  });
-  panel.append(addTransition);
-
-  const removeStep = element("button", "delete-instance-button workflow-remove-step", "Remove step");
-  removeStep.type = "button";
-  removeStep.addEventListener("click", () => removeWorkflowStep(workflow, step));
-  panel.append(removeStep);
-}
-
-function renderWorkflowTransition(panel, workflow, step, transition, index) {
-  const card = element("div", "workflow-transition-editor");
-  const heading = element("div", "workflow-transition-heading");
-  heading.append(element("strong", "", `Transition ${index + 1}`));
-  const remove = element("button", "workflow-transition-remove", "Remove");
-  remove.type = "button";
-  remove.addEventListener("click", () => {
-    step.transitions.splice(index, 1);
-    markWorkflowEdited(workflow);
-    renderWorkflowDiagram(workflow);
-    renderInspector();
-  });
-  heading.append(remove);
-  card.append(heading);
-  appendEditableField(card, "When", transition.when, (value) => {
-    transition.when = value;
-    markWorkflowEdited(workflow);
-    renderWorkflowDiagram(workflow);
-  });
-  const targetType = transition.next ? "next" : transition.to ? "to" : "result";
-  appendEditableField(card, "Destination", targetType, (value) => {
-    delete transition.next;
-    delete transition.to;
-    delete transition.result;
-    if (value === "next") transition.next = workflow.data.steps[0].id;
-    else if (value === "to") {
-      if (!screens.length) {
-        transition.result = "No Screen is available in this project.";
-      } else transition.to = screens[0].id;
-    } else transition.result = "Describe the outcome.";
-    markWorkflowEdited(workflow);
-    renderWorkflowDiagram(workflow);
-    renderInspector();
-  }, { selectOptions: ["next", "to", "result"] });
-
-  if (targetType === "next") {
-    appendEditableField(card, "Next step", transition.next, (value) => {
-      transition.next = value;
-      markWorkflowEdited(workflow);
-      renderWorkflowDiagram(workflow);
-    }, { selectOptions: workflow.data.steps.map((entry) => entry.id) });
-  } else if (targetType === "to") {
-    appendEditableField(card, "Screen", transition.to, (value) => {
-      transition.to = value;
-      markWorkflowEdited(workflow);
-      renderWorkflowDiagram(workflow);
-    }, { selectOptions: screens.map((screen) => screen.id) });
-  } else {
-    appendEditableField(card, "Result (guidance)", transition.result, (value) => {
-      transition.result = value;
-      markWorkflowEdited(workflow);
-      renderWorkflowDiagram(workflow);
-    }, { multiline: true });
-  }
-  panel.append(card);
-}
-
-function addWorkflowStep(workflow) {
-  let index = workflow.data.steps.length + 1;
-  let id = `step-${index}`;
-  while (workflow.data.steps.some((step) => step.id === id)) {
-    index += 1;
-    id = `step-${index}`;
-  }
-  const step = {
-    id,
-    description: "Describe this step.",
-    transitions: [{ when: "Describe a condition", result: "Describe the outcome." }]
-  };
-  workflow.data.steps.push(step);
-  if (!workflow.data.entry) workflow.data.entry = id;
-  activeWorkflowStepId = id;
-  markWorkflowEdited(workflow);
-  renderWorkflowDiagram(workflow);
-  renderInspector();
-}
-
-function removeWorkflowStep(workflow, step) {
-  if (workflow.data.steps.length === 1) {
-    showWorkflowOutput("Cannot remove the final step", "A workflow must contain at least one step.");
-    return;
-  }
-  if (workflow.data.entry === step.id) {
-    showWorkflowOutput("Change the entry step first", "Select another step as the workflow entry before removing this one.");
-    return;
-  }
-  const referencedBy = workflow.data.steps.find((entry) =>
-    entry.transitions?.some((transition) => transition.next === step.id)
-  );
-  if (referencedBy) {
-    showWorkflowOutput("Step is still referenced", `Update the transition from "${referencedBy.id}" before removing this step.`);
-    return;
-  }
-  workflow.data.steps = workflow.data.steps.filter((entry) => entry !== step);
-  activeWorkflowStepId = workflow.data.entry;
-  markWorkflowEdited(workflow);
-  renderWorkflowDiagram(workflow);
-  renderInspector();
-}
-
-function markWorkflowEdited(workflow) {
-  clearTimeout(workflow.yamlTimer);
-  workflow.yamlParseVersion += 1;
-  workflow.yamlSourceMode = "data";
-  const version = ++workflow.yamlSerializeVersion;
-  const filePath = workflow.file;
-  try {
-    validateWorkflow(workflow.data, workflow.id);
-    invalidYamlFiles.delete(filePath);
-    setWorkflowYamlStatus(workflow, "Workflow is valid.");
-  } catch (error) {
-    invalidYamlFiles.set(filePath, error.message || String(error));
-    setWorkflowYamlStatus(workflow, error.message || String(error), true);
-  }
-  markEdited(filePath);
-  fetch("/api/yaml/stringify", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ data: workflow.data })
-  }).then(async (response) => {
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || `YAML serialization failed (HTTP ${response.status}).`);
-    if (version !== workflow.yamlSerializeVersion || workflow.yamlSourceMode !== "data") return;
-    workflow.yamlSource = result.source;
-    if (viewingWorkflow && activeWorkflowId === workflow.id) {
-      byId("workflow-yaml-source").value = result.source;
-    }
-  }).catch((error) => {
-    if (version !== workflow.yamlSerializeVersion) return;
-    invalidYamlFiles.set(filePath, error.message || String(error));
-    setWorkflowYamlStatus(workflow, `Could not update YAML: ${error.message || String(error)}`, true);
-    updateSaveControls();
-  });
-}
-
-function editWorkflowYaml(workflow) {
-  const textarea = byId("workflow-yaml-source");
-  const source = textarea.value;
-  workflow.yamlSource = source;
-  workflow.yamlSourceMode = "source";
-  const version = ++workflow.yamlParseVersion;
-  invalidYamlFiles.set(workflow.file, "Validating workflow YAML...");
-  setWorkflowYamlStatus(workflow, "Validating workflow YAML...");
-  markEdited(workflow.file);
-  clearTimeout(workflow.yamlTimer);
-  workflow.yamlTimer = setTimeout(async () => {
-    try {
-      const response = await fetch("/api/yaml/parse", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source })
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || `YAML parsing failed (HTTP ${response.status}).`);
-      if (version !== workflow.yamlParseVersion) return;
-      validateWorkflow(result.data, workflow.id);
-      workflow.data = result.data;
-      workflow.yamlSource = source;
-      invalidYamlFiles.delete(workflow.file);
-      setWorkflowYamlStatus(workflow, "Workflow YAML is valid.");
-      if (viewingWorkflow && activeWorkflowId === workflow.id) {
-        if (!workflow.data.steps.some((step) => step.id === activeWorkflowStepId)) {
-          activeWorkflowStepId = workflow.data.entry;
-        }
-        renderWorkflowDiagram(workflow);
-        renderInspector();
-      }
-      renderNavigation();
-      updateSaveControls();
-    } catch (error) {
-      if (version !== workflow.yamlParseVersion) return;
-      invalidYamlFiles.set(workflow.file, error.message || String(error));
-      setWorkflowYamlStatus(workflow, error.message || String(error), true);
-      updateSaveControls();
-    }
-  }, 250);
-}
-
-function setWorkflowYamlStatus(workflow, message, isError = false) {
-  workflow.yamlStatus = { message, isError };
-  if (!viewingWorkflow || activeWorkflowId !== workflow.id) return;
-  const status = byId("workflow-yaml-status");
-  status.textContent = message;
-  status.classList.toggle("error", isError);
-}
-
 async function renderAssetTemplate(assetId) {
   const template = assets.get(assetId);
   if (!template) return;
-  clearWorkflowDiagramResizeObserver();
   closeAssetContextMenu();
   updateScreenDomContext(null);
   clearTimeout(assetPreviewTimer);
   assetPreviewTimer = null;
   viewingTheme = false;
   viewingProject = false;
-  viewingWorkflow = false;
-  activeWorkflowId = null;
-  activeWorkflowStepId = null;
+  viewingSpec = false;
+  activeSpecPath = null;
+  activeSpecInstancePath = [];
   activeAssetId = assetId;
   activeInstancePath = [];
   viewingAssetTemplate = true;
-  byId("main").classList.remove("workflow-editing");
-  byId("workflow-yaml-editor-panel").hidden = true;
-  byId("workflow-yaml-source").oninput = null;
-  hideWorkflowOutput();
+  byId("main").classList.remove("spec-editing");
+  byId("spec-editor-panel").hidden = true;
+  byId("spec-source").oninput = null;
+  hideEditorMessage();
   updateNavigationSelection();
   byId("screen-heading").textContent = `${template.data.name || assetId} template`;
   byId("screen-stage").setAttribute("aria-label", `${template.data.name || assetId} template preview`);
@@ -1966,7 +1589,7 @@ async function renderInstance(instance, template, instancePath, screenId = "", s
       if (sourcePath) {
         moveAssetInstance(sourcePath, parentPath, slotId, insertionIndex).catch(showAddAssetError);
       } else if (!assets.has(assetId)) {
-        showWorkflowOutput("Could not add asset", `Asset template "${assetId}" is not available in this project.`);
+        showEditorMessage("Could not add asset", `Asset template "${assetId}" is not available in this project.`);
       } else {
         paletteAssetDropHandled = true;
         if (instancePath.length === 1) {
@@ -1979,6 +1602,22 @@ async function renderInstance(instance, template, instancePath, screenId = "", s
     host.addEventListener("click", (event) => {
       const clickedInstance = getEventInstance(event);
       if (clickedInstance === host) selectInstance(instancePath, template.id);
+    });
+    host.addEventListener("dblclick", (event) => {
+      if (!screenId || getEventInstance(event) !== host) return;
+      event.preventDefault();
+      event.stopPropagation();
+      selectInstance(instancePath, template.id);
+      const selected = getInstanceAtPath(screens[activeScreenIndex], instancePath);
+      if (!selected?.spec) {
+        createSpecForInstance(instancePath).catch((error) =>
+          showEditorMessage("Could not create behavior spec", error.message || String(error))
+        );
+        return;
+      }
+      renderSpecEditor(selected.spec, instancePath).catch((error) =>
+        showEditorMessage("Could not open behavior spec", error.message || String(error))
+      );
     });
     host.addEventListener("contextmenu", (event) => {
       if (!screenId) return;
@@ -1999,14 +1638,6 @@ async function renderInstance(instance, template, instancePath, screenId = "", s
   }
 
   await renderInstanceSlots(root, instance, template, instancePath, screenId, screenName);
-  root.addEventListener("click", (event) => {
-    const trigger = event.composedPath().find((node) =>
-      node instanceof Element && node.getAttribute("data-openux-event") === "click"
-    );
-    if (!trigger) return;
-    const interaction = (instance.interactions || []).find((item) => item.event === "click");
-    if (interaction?.action) runAction(interaction.action);
-  });
   return host;
 }
 
@@ -2092,9 +1723,9 @@ async function copyAssetDetails(target) {
     };
     const clipboardText = `OpenUX asset details:\n\`\`\`json\n${JSON.stringify(details, null, 2)}\n\`\`\``;
     await navigator.clipboard.writeText(clipboardText);
-    showWorkflowOutput("Asset details copied", "Paste the OpenUX context into your prompt.");
+    showEditorMessage("Asset details copied", "Paste the OpenUX context into your prompt.");
   } catch (error) {
-    showWorkflowOutput("Could not copy asset details", error.message || String(error));
+    showEditorMessage("Could not copy asset details", error.message || String(error));
   }
 }
 
@@ -2102,7 +1733,7 @@ function confirmDeleteAsset(target) {
   try {
     const { screen, instance, template } = resolveAssetContextTarget(target);
     if (target.instancePath.length === 1) {
-      showWorkflowOutput("Cannot delete root layout", "A Screen must keep its root layout. Delete or move its content assets instead.");
+      showEditorMessage("Cannot delete root layout", "A Screen must keep its root layout. Delete or move its content assets instead.");
       return;
     }
     const instanceName = instance.name || template.data.name || template.id;
@@ -2118,7 +1749,7 @@ function confirmDeleteAsset(target) {
     byId("asset-delete-dialog").showModal();
     byId("asset-delete-cancel").focus();
   } catch (error) {
-    showWorkflowOutput("Could not delete asset", error.message || String(error));
+    showEditorMessage("Could not delete asset", error.message || String(error));
   }
 }
 
@@ -2182,7 +1813,7 @@ async function renderInstanceSlots(root, instance, template, instancePath, scree
         if (sourcePath) {
           moveAssetInstance(sourcePath, instancePath, slot.id).catch(showAddAssetError);
         } else if (!assets.has(assetId)) {
-          showWorkflowOutput("Could not add asset", `Asset template "${assetId}" is not available in this project.`);
+          showEditorMessage("Could not add asset", `Asset template "${assetId}" is not available in this project.`);
         } else {
           paletteAssetDropHandled = true;
           addAssetToSlot(instancePath, slot.id, assetId).catch(showAddAssetError);
@@ -2273,16 +1904,16 @@ function mountAssetMarkup(root, markup, assetBase, instance, template) {
         min-width: 0;
       }
       .openux-drop-slot.drop-target {
-        outline: 2px dashed var(--theme-primary, #4569e8);
+        outline: 2px dashed var(--studio-primary);
         outline-offset: 3px;
-        background: color-mix(in srgb, var(--theme-primary, #4569e8) 7%, transparent);
+        background: color-mix(in srgb, var(--studio-primary) 7%, transparent);
       }
       .openux-drop-slot:empty::before {
         content: attr(data-placeholder);
         padding: 12px;
-        border: 1px dashed var(--theme-border, #dfe4ed);
+        border: 1px dashed var(--studio-border);
         border-radius: 8px;
-        color: var(--theme-muted, #718096);
+        color: var(--studio-muted);
         font: 12px Inter, "Segoe UI", Arial, sans-serif;
         text-align: center;
       }
@@ -2294,10 +1925,10 @@ function mountAssetMarkup(root, markup, assetBase, instance, template) {
         border-radius: 9px;
         cursor: pointer;
       }
-      .asset-instance:hover { border-color: var(--theme-border, #dfe4ed); }
+      .asset-instance:hover { border-color: var(--studio-border); }
       .asset-instance.selected {
-        border-color: var(--theme-focus, #8ba0f1);
-        background: color-mix(in srgb, var(--theme-primary, #4569e8) 4%, transparent);
+        border-color: var(--studio-focus);
+        background: color-mix(in srgb, var(--studio-primary) 4%, transparent);
       }
       .asset-instance.dragging { opacity: .45; }
       .asset-instance.drop-before::before, .asset-instance.drop-after::after {
@@ -2306,14 +1937,14 @@ function mountAssetMarkup(root, markup, assetBase, instance, template) {
         left: 0;
         height: 3px;
         border-radius: 3px;
-        background: var(--theme-primary, #4569e8);
+        background: var(--studio-primary);
         content: "";
         pointer-events: none;
       }
       .asset-instance.drop-before::before { top: -3px; }
       .asset-instance.drop-after::after { bottom: -3px; }
       .asset-instance:focus-visible {
-        outline: 2px solid var(--theme-focus, #8ba0f1);
+        outline: 2px solid var(--studio-focus);
         outline-offset: 2px;
       }
     `;
@@ -2415,6 +2046,12 @@ function selectInstance(path, assetId) {
   viewingAssetTemplate = false;
   viewingTheme = false;
   viewingProject = false;
+  viewingSpec = false;
+  activeSpecPath = null;
+  activeSpecInstancePath = [];
+  byId("main").classList.remove("spec-editing");
+  byId("spec-editor-panel").hidden = true;
+  byId("spec-source").oninput = null;
   findAssetInstances(byId("screen-preview")).forEach((node) => {
     node.classList.toggle("selected", node.dataset.instancePath === JSON.stringify(path));
   });
@@ -2425,7 +2062,8 @@ function selectInstance(path, assetId) {
 function updateNavigationSelection() {
   document.querySelectorAll(".screen-option").forEach((button) => {
     const selected = Number(button.dataset.screenIndex) === activeScreenIndex &&
-      !viewingTheme && !viewingProject && !viewingWorkflow && !viewingAssetTemplate;
+      !viewingTheme && !viewingProject && !viewingAssetTemplate &&
+      !(viewingSpec && activeSpecOwner === "project");
     button.classList.toggle("selected", selected);
     if (selected) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
@@ -2434,27 +2072,27 @@ function updateNavigationSelection() {
     button.classList.toggle("selected", viewingAssetTemplate && button.dataset.assetId === activeAssetId);
     const asset = assets.get(button.dataset.assetId);
     if (asset) {
+      const targetScreen = screens[activeScreenIndex];
+      const requiresRootLayout = targetScreen?.data.assets?.length === 0;
+      const canDrag = Boolean(targetScreen) && (!requiresRootLayout || Boolean(asset.data.slots?.length));
+      button.draggable = canDrag;
       button.setAttribute(
         "aria-label",
-        `Edit ${asset.data.name || asset.id} template; drag to add to ${screens[activeScreenIndex]?.data.name || "current Screen"}`
+        canDrag
+          ? `Edit ${asset.data.name || asset.id} template; drag to add to ${targetScreen.data.name || "current Screen"}`
+          : `Edit ${asset.data.name || asset.id} template`
       );
     }
-  });
-  document.querySelectorAll(".workflow-option").forEach((button) => {
-    const selected = viewingWorkflow && button.dataset.workflowId === activeWorkflowId;
-    button.classList.toggle("selected", selected);
-    if (selected) button.setAttribute("aria-current", "page");
-    else button.removeAttribute("aria-current");
   });
   const themeButton = byId("theme-nav");
   themeButton.classList.toggle("selected", viewingTheme);
   if (viewingTheme) themeButton.setAttribute("aria-current", "page");
   else themeButton.removeAttribute("aria-current");
   const projectButton = byId("project-nav");
-  projectButton.classList.toggle("selected", viewingProject);
-  if (viewingProject) projectButton.setAttribute("aria-current", "page");
+  const projectSelected = viewingProject || (viewingSpec && activeSpecOwner === "project");
+  projectButton.classList.toggle("selected", projectSelected);
+  if (projectSelected) projectButton.setAttribute("aria-current", "page");
   else projectButton.removeAttribute("aria-current");
-  byId("review-card").hidden = viewingProject;
   publishSelection();
 }
 
@@ -2475,8 +2113,8 @@ function renderInspector() {
     renderProjectDetails(panel);
   } else if (viewingTheme) {
     renderThemeDetails(panel);
-  } else if (viewingWorkflow) {
-    renderWorkflowDetails(panel);
+  } else if (viewingSpec) {
+    renderSpecDetails(panel);
   } else if (viewingAssetTemplate) {
     renderTemplateDetails(panel, assets.get(activeAssetId));
   } else {
@@ -2499,9 +2137,55 @@ function renderProjectDetails(panel) {
   appendDetail(panel, "Description", project.description || "No project description has been provided.");
   appendDetail(panel, "Screens", screens.length);
   appendDetail(panel, "Asset templates", assets.size);
+  appendDetail(panel, "Behavior specs", specSources.size);
   appendDetail(panel, "Theme", theme?.name || "Not configured");
-  appendDetail(panel, "Workflows", workflows.size);
   appendDetail(panel, "Project manifest", "openux/project.yml");
+  appendSection(panel, "Project behavior spec");
+  const pendingDraft = [...createdSpecDrafts.entries()].find(([, draft]) => draft.owner === "project");
+  const filePath = project.spec || pendingDraft?.[0];
+  if (filePath) {
+    appendDetail(panel, "File", filePath);
+    const openSpec = element(
+      "button",
+      "spec-action-button",
+      project.spec ? "Open project behavior spec" : "Open project behavior spec draft"
+    );
+    openSpec.type = "button";
+    openSpec.addEventListener("click", () =>
+      renderSpecEditor(filePath, [], "project").catch((error) =>
+        showEditorMessage("Could not open project behavior spec", error.message || String(error))
+      )
+    );
+    panel.append(openSpec);
+  } else {
+    appendDetail(panel, "File", "No project behavior spec attached.");
+    const createSpec = element("button", "spec-action-button", "Create project behavior spec");
+    createSpec.type = "button";
+    createSpec.addEventListener("click", () =>
+      createProjectSpec().catch((error) =>
+        showEditorMessage("Could not create project behavior spec", error.message || String(error))
+      )
+    );
+    panel.append(createSpec);
+  }
+}
+
+function renderSpecDetails(panel) {
+  if (activeSpecOwner === "project") {
+    appendSection(panel, "Project behavior spec");
+    appendDetail(panel, "File", activeSpecPath || "Unavailable");
+    appendDetail(panel, "Project", project.name || "Untitled project");
+    appendDetail(panel, "Format", "OpenSpec behavior contract; not executable.");
+    return;
+  }
+  const screen = screens[activeScreenIndex];
+  const instance = screen && getInstanceAtPath(screen, activeSpecInstancePath);
+  const template = instance && assets.get(instance["asset-template"]);
+  appendSection(panel, "Behavior spec");
+  appendDetail(panel, "File", activeSpecPath || "Unavailable");
+  appendDetail(panel, "Screen", screen?.data.name || screen?.id || "Unavailable");
+  appendDetail(panel, "Asset instance", instance?.name || template?.data.name || template?.id || "Unavailable");
+  appendDetail(panel, "Format", "Markdown behavior guidance; not executable.");
 }
 
 function renderScreenDetails(panel, screen) {
@@ -2640,7 +2324,6 @@ function renderReviewControls(panel) {
   reviewButton.id = "review-toggle";
   reviewButton.addEventListener("click", () => {
     reviewedInSession = !reviewedInSession;
-    updateReviewCard();
     renderInspector();
   });
   review.append(reviewButton);
@@ -2690,11 +2373,25 @@ function renderInstanceDetails(panel, instance, template) {
     else delete instance.note;
     markEdited(screens[activeScreenIndex].file);
   }, { multiline: true });
-  for (const interaction of instance.interactions || []) {
-    const action = interaction.action;
-    if (action?.type === "invoke-workflow") {
-      appendDetail(panel, `${interaction.event} action`, `Invoke workflow: ${action.workflow}`);
-    }
+  appendSection(panel, "Behavior spec");
+  if (instance.spec) {
+    appendDetail(panel, "File", instance.spec);
+    const openSpec = element("button", "spec-action-button", "Open behavior spec");
+    openSpec.type = "button";
+    openSpec.addEventListener("click", () =>
+      renderSpecEditor(instance.spec, activeInstancePath).catch(showFatalError)
+    );
+    panel.append(openSpec);
+  } else {
+    appendDetail(panel, "File", "No behavior spec attached.");
+    const createSpec = element("button", "spec-action-button", "Create behavior spec");
+    createSpec.type = "button";
+    createSpec.addEventListener("click", () =>
+      createSpecForInstance([...activeInstancePath]).catch((error) =>
+        showEditorMessage("Could not create behavior spec", error.message || String(error))
+      )
+    );
+    panel.append(createSpec);
   }
   const deleteButton = element("button", "delete-instance-button", "Delete asset instance");
   deleteButton.type = "button";
@@ -2871,12 +2568,17 @@ function markEdited(filePath) {
   dirtyFiles.set(filePath, ++editVersion);
   hasEdits = true;
   reviewedInSession = false;
-  updateReviewCard();
   updateSaveControls();
   const message = byId("review-message");
   const button = byId("review-toggle");
   if (message) message.textContent = "Changes require another review.";
   if (button) button.textContent = "Mark reviewed";
+}
+
+function clearEdited(filePath) {
+  if (!dirtyFiles.delete(filePath)) return;
+  hasEdits = dirtyFiles.size > 0;
+  updateSaveControls();
 }
 
 function markAssetTemplateEdited(template) {
@@ -2908,27 +2610,25 @@ function markAssetTemplateEdited(template) {
   });
 }
 
-function updateSaveControls(message) {
+function updateSaveControls() {
   const saveButton = byId("save-project");
-  const status = byId("save-status");
-  if (!saveButton || !status) return;
+  if (!saveButton) return;
   const invalidYamlMessage = invalidYamlFiles.values().next().value;
   saveButton.disabled = isSaving || dirtyFiles.size === 0 || invalidYamlFiles.size > 0;
-  saveButton.textContent = isSaving ? "Saving..." : "Save changes";
-  status.classList.toggle("error", Boolean(message?.startsWith("Save failed")) || Boolean(invalidYamlMessage));
-  status.textContent = message || (invalidYamlMessage
+  saveButton.textContent = isSaving
+    ? "Saving..."
+    : dirtyFiles.size > 0
+      ? `Save (${dirtyFiles.size})`
+      : "Save";
+  saveButton.title = invalidYamlMessage
     ? `Fix invalid YAML before saving: ${invalidYamlMessage}`
-    : dirtyFiles.size
-      ? `${dirtyFiles.size} unsaved file${dirtyFiles.size === 1 ? "" : "s"}`
-      : "All changes saved");
+    : "";
 }
 
 function getProjectFileData(filePath) {
   if (filePath === "project.yml") return project;
   const screen = screens.find((entry) => entry.file === filePath);
   if (screen) return screen.data;
-  const workflow = [...workflows.values()].find((entry) => entry.file === filePath);
-  if (workflow) return workflow.data;
   const asset = [...assets.values()].find((entry) => `${entry.directory}/asset.yml` === filePath);
   if (asset) return asset.data;
   if (project.theme === filePath) return theme;
@@ -2938,9 +2638,12 @@ function getProjectFileData(filePath) {
 function getProjectFileSaveEntry(filePath) {
   const assetHtml = [...assets.values()].find((entry) => entry.htmlFile === filePath);
   if (assetHtml) return { path: filePath, content: assetHtml.html };
-  const workflow = [...workflows.values()].find((entry) => entry.file === filePath);
-  if (workflow?.yamlSourceMode === "source") {
-    return { path: filePath, content: workflow.yamlSource };
+  if (specSources.has(filePath)) {
+    return {
+      path: filePath,
+      ...(createdSpecFiles.has(filePath) ? { create: true } : {}),
+      content: specSources.get(filePath)
+    };
   }
   const assetYaml = [...assets.values()].find((entry) => `${entry.directory}/asset.yml` === filePath);
   if (assetYaml?.yamlSourceMode === "source") {
@@ -2965,61 +2668,98 @@ async function saveProjectChanges() {
     updateSaveControls();
     return;
   }
-  const snapshot = [...dirtyFiles].map(([filePath, version]) => ({
-    version,
-    ...getProjectFileSaveEntry(filePath)
-  }));
+  for (const [filePath, draft] of createdSpecDrafts) {
+    if (specSources.get(filePath) === draft.initialContent) continue;
+    if (draft.owner === "project") {
+      project.spec = filePath;
+      createdSpecFiles.add(filePath);
+      continue;
+    }
+    const screen = screens.find((entry) => entry.file === draft.screenFile);
+    const instance = screen && getInstanceAtPath(screen, draft.instancePath);
+    if (!instance) {
+      createdSpecDrafts.delete(filePath);
+      createdSpecFiles.delete(filePath);
+      specSources.delete(filePath);
+      clearEdited(filePath);
+      continue;
+    }
+    instance.spec = filePath;
+    createdSpecFiles.add(filePath);
+  }
+  if (dirtyFiles.size === 0) return;
+  const saveEntries = new Map([...dirtyFiles].map(([filePath, version]) => [
+    filePath,
+    { version, ...getProjectFileSaveEntry(filePath) }
+  ]));
+  for (const [filePath, draft] of createdSpecDrafts) {
+    const linkFile = draft.owner === "project" ? "project.yml" : draft.screenFile;
+    if (specSources.get(filePath) === draft.initialContent || saveEntries.has(linkFile)) continue;
+    saveEntries.set(linkFile, {
+      version: dirtyFiles.get(linkFile) ?? null,
+      ...getProjectFileSaveEntry(linkFile)
+    });
+  }
+  const savePriority = (file) => file.create && file.path.endsWith(".md")
+    ? 0
+    : file.create
+      ? 1
+      : 2;
+  const snapshot = [...saveEntries.values()].sort((left, right) =>
+    savePriority(left) - savePriority(right)
+  );
+  const copySnapshot = pendingAssetCopies.slice();
   isSaving = true;
+  byId("spec-source").disabled = true;
   byId("reset-project").disabled = true;
-  updateSaveControls("Saving changes...");
+  updateSaveControls();
   try {
     const response = await fetch("/api/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ files: snapshot.map(({ version, ...file }) => file) })
+      body: JSON.stringify({
+        files: snapshot.map(({ version, ...file }) => file),
+        ...(copySnapshot.length ? { assetCopies: copySnapshot } : {})
+      })
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || `Save failed (HTTP ${response.status}).`);
     for (const file of snapshot) {
       if (file.create) createdScreenFiles.delete(file.path);
+      if (file.create) createdSpecFiles.delete(file.path);
+      if (file.create && createdSpecDrafts.has(file.path)) {
+        const draft = createdSpecDrafts.get(file.path);
+        if (draft.owner === "project") {
+          project.spec = file.path;
+        } else {
+          const screen = screens.find((entry) => entry.file === draft.screenFile);
+          const instance = screen && getInstanceAtPath(screen, draft.instancePath);
+          if (instance) instance.spec = file.path;
+        }
+        createdSpecDrafts.delete(file.path);
+        if (activeSpecPath === file.path) byId("spec-status").textContent = "Saved.";
+      }
       if (dirtyFiles.get(file.path) === file.version) dirtyFiles.delete(file.path);
     }
+    const savedCopyIds = new Set(copySnapshot.map((copy) => copy.targetId));
+    for (let index = pendingAssetCopies.length - 1; index >= 0; index -= 1) {
+      if (savedCopyIds.has(pendingAssetCopies[index].targetId)) {
+        pendingAssetCopies.splice(index, 1);
+      }
+    }
     hasEdits = dirtyFiles.size > 0;
-    updateReviewCard();
     updateSaveControls();
-    if (hasEdits) {
-      updateSaveControls("Saved; newer edits remain unsaved");
-    } else {
-      showWorkflowOutput("Changes saved", `${result.saved.length} project file${result.saved.length === 1 ? "" : "s"} saved to openux/.`);
+    if (!hasEdits) {
+      showEditorMessage("Changes saved", `${result.saved.length} project file${result.saved.length === 1 ? "" : "s"} saved to openux/.`);
     }
   } catch (error) {
-    updateSaveControls(`Save failed: ${error.message || String(error)}`);
-    showWorkflowOutput("Could not save changes", error.message || String(error));
+    showEditorMessage("Could not save changes", error.message || String(error));
   } finally {
     isSaving = false;
-    if (!byId("save-status").textContent.startsWith("Save failed")) updateSaveControls();
+    byId("spec-source").disabled = false;
+    updateSaveControls();
     byId("reset-project").disabled = false;
   }
-}
-
-function updateReviewCard() {
-  const card = byId("review-card");
-  if (!card) return;
-  card.replaceChildren();
-  card.append(element("span", "review-check", reviewedInSession ? "OK" : hasEdits ? "*" : "OK"));
-  const message = element("div");
-  const heading = reviewedInSession
-    ? "Reviewed in this session"
-    : hasEdits
-      ? "Unsaved edits"
-      : "Preview ready";
-  message.append(element("strong", "", heading));
-  message.append(document.createTextNode(
-    hasEdits
-      ? " Save these changes to the example project, or reset to discard them."
-      : " Review the rendered result before accepting the design."
-  ));
-  card.append(message);
 }
 
 async function refreshActiveView() {
@@ -3049,36 +2789,35 @@ byId("reset-project").addEventListener("click", async () => {
 });
 
 byId("create-screen").addEventListener("click", () =>
-  createScreen().catch((error) => showWorkflowOutput("Could not create Screen", error.message || String(error)))
+  createScreen().catch((error) => showEditorMessage("Could not create Screen", error.message || String(error)))
 );
 byId("project-nav").addEventListener("click", renderProjectOverview);
 byId("save-project").addEventListener("click", () => saveProjectChanges());
 
 byId("theme-nav").addEventListener("click", () => {
   if (!theme) return;
-  clearWorkflowDiagramResizeObserver();
   clearTimeout(assetPreviewTimer);
   assetPreviewTimer = null;
   assetPreviewVersion += 1;
   byId("main").classList.remove("asset-editing");
-  byId("main").classList.remove("workflow-editing");
+  byId("main").classList.remove("spec-editing");
   byId("asset-html-editor-panel").hidden = true;
   byId("asset-html-source").oninput = null;
   byId("asset-yaml-editor-panel").hidden = true;
   byId("asset-yaml-source").oninput = null;
-  byId("workflow-yaml-editor-panel").hidden = true;
-  byId("workflow-yaml-source").oninput = null;
+  byId("spec-editor-panel").hidden = true;
+  byId("spec-source").oninput = null;
   viewingAssetTemplate = false;
   viewingProject = false;
-  viewingWorkflow = false;
-  activeWorkflowId = null;
-  activeWorkflowStepId = null;
+  viewingSpec = false;
+  activeSpecPath = null;
+  activeSpecInstancePath = [];
   activeAssetId = null;
   activeInstancePath = [];
   viewingTheme = true;
   byId("breadcrumb").textContent = "Project theme";
   byId("screen-heading").textContent = theme.name || "Theme";
-  hideWorkflowOutput();
+  hideEditorMessage();
   updateNavigationSelection();
   renderInspector();
 });
@@ -3109,7 +2848,7 @@ byId("asset-delete-confirm").addEventListener("click", () => {
   closeAssetDeleteDialog(false);
   if (!target) return;
   deleteAssetInstance([...target.instancePath]).catch((error) =>
-    showWorkflowOutput("Could not delete asset", error.message || String(error))
+    showEditorMessage("Could not delete asset", error.message || String(error))
   );
 });
 
@@ -3146,57 +2885,14 @@ document.addEventListener("keydown", (event) => {
 window.addEventListener("resize", () => closeAssetContextMenu());
 window.addEventListener("scroll", () => closeAssetContextMenu(), true);
 
-async function runAction(action) {
-  for (const host of findAssetInstances(byId("screen-preview"))) {
-    const root = host.shadowRoot || host;
-    for (const input of root.querySelectorAll("input")) {
-      if (!input.checkValidity()) {
-        input.reportValidity();
-        showWorkflowOutput("Check the form fields", "Complete required fields and use a valid email address before continuing.");
-        return;
-      }
-    }
-  }
-  if (action.type !== "invoke-workflow") {
-    showWorkflowOutput("Unsupported preview action", `The action type "${action.type}" is not supported by this preview.`);
-    return;
-  }
-  const workflow = workflows.get(action.workflow);
-  if (!workflow) {
-    showWorkflowOutput("Workflow not found", `No workflow "${action.workflow}" is listed in project.yml.`);
-    return;
-  }
-  const output = byId("workflow-output");
-  output.replaceChildren();
-  output.append(element("strong", "", `Preview: ${workflow.data.name || action.workflow}`));
-  output.append(element("div", "", workflow.data.description || "Workflow graph preview"));
-  for (const step of workflow.data.steps) {
-    output.append(element("div", "", `${step.id}: ${step.description || "No step description."}`));
-    for (const transition of step.transitions) {
-      const destination = transition.next
-        ? `next: ${transition.next}`
-        : transition.to
-          ? `Screen: ${transition.to}`
-          : `result: ${transition.result}`;
-      output.append(element("div", "", `When ${transition.when} → ${destination}`));
-    }
-  }
-  output.append(element(
-    "div",
-    "",
-    `Entry step: ${workflow.data.entry}. This preview describes the flow; no steps, backend actions, or navigation were executed.`
-  ));
-  output.classList.add("visible");
-}
-
-function showWorkflowOutput(title, message) {
-  const output = byId("workflow-output");
+function showEditorMessage(title, message) {
+  const output = byId("editor-message");
   output.replaceChildren(element("strong", "", title), element("div", "", message));
   output.classList.add("visible");
 }
 
-function hideWorkflowOutput() {
-  const output = byId("workflow-output");
+function hideEditorMessage() {
+  const output = byId("editor-message");
   output.classList.remove("visible");
   output.replaceChildren();
 }
