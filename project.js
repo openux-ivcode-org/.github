@@ -245,6 +245,14 @@ async function validateProject(projectRoot) {
     if (Object.hasOwn(screen.data, "spec")) {
       errors.push(`${screen.file}: Screen-level behavior specs are not supported; attach specs to the relevant asset instances.`);
     }
+    let previewStateIds = new Set(["default"]);
+    try {
+      previewStateIds = new Set(
+        validation.validatePreviewStates(screen.data, screen.file).map((state) => state.id)
+      );
+    } catch (error) {
+      pushError(errors, screen.file, error);
+    }
     if (!Array.isArray(screen.data.assets)) {
       errors.push(`${screen.file}: Screen "${screen.id}" assets must be a list.`);
       continue;
@@ -290,6 +298,23 @@ async function validateProject(projectRoot) {
       }
       if (Object.hasOwn(instance, "interactions")) {
         errors.push(`${location}: interactions are no longer supported; describe behavior in the instance's Markdown spec.`);
+      }
+      if (instance.visibility !== undefined) {
+        if (depth === 0) {
+          errors.push(`${location}: the root layout cannot have state-specific visibility.`);
+        }
+        if (!validation.isMapping(instance.visibility)) {
+          errors.push(`${location}: visibility must be a mapping of preview state ids to booleans.`);
+        } else {
+          for (const [stateId, visible] of Object.entries(instance.visibility)) {
+            if (!previewStateIds.has(stateId)) {
+              errors.push(`${location}: visibility references unknown preview state "${stateId}".`);
+            }
+            if (typeof visible !== "boolean") {
+              errors.push(`${location}: visibility for preview state "${stateId}" must be a boolean.`);
+            }
+          }
+        }
       }
       const definitions = asset.data.attributes || {};
       const values = instance.attributes === undefined ? {} : instance.attributes;

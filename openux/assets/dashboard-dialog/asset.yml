@@ -1,0 +1,7 @@
+id: dashboard-dialog
+name: Add Item Dialog
+description: An example modal overlay shown only in the Add item dialog preview state.
+category: Dashboards/Overlays
+render:
+  type: html-reference
+  interactive: false

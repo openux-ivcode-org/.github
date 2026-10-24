@@ -16,6 +16,7 @@ This reference is versioned with the OpenUX CLI. Start by reading the target pro
 3. Keep Screen YAML structural. Reuse suitable templates; create a new template only when existing assets cannot express the requested visual element or layout.
 4. Before creating a template, decide whether it belongs to one Screen or is intentionally reusable. Templates for one Screen's unique content or layout are page-specific by default: set `screen: <screen-id>` on their `project.yml` entry so they appear under that Screen's asset list. Omit `screen` only for templates deliberately shared across Screens. A page-specific template may only be used by its owner; copying one to another Screen creates an independent page-local copy. Use globally unique asset IDs and optional slash-delimited `category` paths for organization.
 5. For every asset instance, use only template-declared attributes marked `overridable: true`, with values matching their declared types and options. Declare all slots and referenced local resources in the asset template.
+6. Keep visual variations such as a dialog-open or empty state on the same Screen. Define named `preview-states` in the Screen file and set an instance's `visibility` mapping for states where it should be hidden; unspecified states are visible. These are Studio preview configurations, not executable application behavior or substitutes for behavior specs.
 
 ## Behavior specs
 
@@ -37,7 +38,7 @@ Before finishing, inspect the complete Screen and its asset templates. Audit eve
 2. Render each changed Screen to inspect the complete composition:
 
    ```sh
-   openux render <screen-id> --format image --output <image-file>
+   openux render <screen-id> --format image [--state <preview-state-id>] --output <image-file>
    ```
 
    Use `--format html` to inspect generated markup. If Chromium is not found, set `OPENUX_BROWSER` to its executable path.
@@ -56,6 +57,7 @@ Before reporting a Screen or project task complete, explicitly review every item
 - [ ] Are specs attached to Screen asset instances—not to Screen mappings or asset templates—and is the project-level spec reserved for project-wide behavior?
 - [ ] Are all templates unique to one Screen registered with that Screen's `screen` ID, and are only intentionally reusable templates in the shared library?
 - [ ] Does each Screen have zero or one root layout, and does a populated root declare the slots used by its children?
+- [ ] Are alternate visual states represented as Screen preview states with instance visibility, rather than duplicate Screens?
 - [ ] Do all asset IDs, instance references, attributes, and slot IDs resolve to the project definitions?
 - [ ] Does the installed CLI version from `openux version` match the project's `openux` value?
 - [ ] Does `openux validate` succeed without errors?

@@ -8,7 +8,9 @@ const booleanHtmlAttributes = new Set([
 const sharedValidation = window.OpenuxValidation;
 const { attributeTypes, numberFormats, themeModeNames } = sharedValidation;
 const systemThemeQuery = window.matchMedia?.("(prefers-color-scheme: dark)");
-const renderRequestedScreen = new URLSearchParams(window.location.search).get("render");
+const renderParameters = new URLSearchParams(window.location.search);
+const renderRequestedScreen = renderParameters.get("render");
+const renderRequestedState = renderParameters.get("state");
 const isRenderOnly = renderRequestedScreen !== null;
 const assetDragType = "application/x-openux-asset-template";
 const assetInstanceDragType = "application/x-openux-asset-instance";
@@ -25,6 +27,7 @@ let themeModePreference = "system";
 let systemThemeMode = systemThemeQuery?.matches ? "dark" : "light";
 let appliedThemeTokens = new Set();
 let activeScreenIndex = 0;
+const activePreviewStateIds = new Map();
 const expandedScreenIds = new Set();
 let activeAssetId = null;
 let activeInstancePath = [];
@@ -32,6 +35,7 @@ let viewingAssetTemplate = false;
 let viewingTheme = false;
 let viewingProject = false;
 let viewingSpec = false;
+let viewingPreviewState = false;
 let activeSpecPath = null;
 let activeSpecInstancePath = [];
 let activeSpecOwner = "instance";
@@ -62,6 +66,151 @@ function element(tag, className, text) {
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
+}
+
+function getScreenPreviewStates(screen) {
+  return sharedValidation.getPreviewStates(screen);
+}
+
+function getActivePreviewStateId(screen = screens[activeScreenIndex]?.data) {
+  if (!screen) return "default";
+  const states = getScreenPreviewStates(screen);
+  const activeId = activePreviewStateIds.get(screens[activeScreenIndex]?.id);
+  return states.some((state) => state.id === activeId)
+    ? activeId
+    : "default";
+}
+
+function isInstanceVisible(instance, stateId = getActivePreviewStateId()) {
+  return instance.visibility?.[stateId] !== false;
+}
+
+function renderPreviewStateControls(screen) {
+  const toolbar = byId("preview-state-toolbar");
+  const select = byId("preview-state-select");
+  const addButton = byId("add-preview-state");
+  const states = getScreenPreviewStates(screen);
+  const activeStateId = getActivePreviewStateId(screen);
+  activePreviewStateIds.set(screens[activeScreenIndex].id, activeStateId);
+  toolbar.hidden = isRenderOnly;
+  select.replaceChildren();
+  for (const state of states) {
+    const option = element("option", "", state.name);
+    option.value = state.id;
+    select.append(option);
+  }
+  select.value = activeStateId;
+  select.onchange = () => switchPreviewState(select.value).catch(showFatalError);
+  addButton.onclick = () => addPreviewState().catch(showFatalError);
+}
+
+function hidePreviewStateControls() {
+  byId("preview-state-toolbar").hidden = true;
+}
+
+function renamePreviewState(stateId, name) {
+  const screen = screens[activeScreenIndex];
+  const normalizedName = name.trim();
+  if (!normalizedName) {
+    showEditorMessage("Preview state needs a name", "Enter a name before leaving this field.");
+    renderPreviewStateControls(screen.data);
+    return;
+  }
+  const states = getScreenPreviewStates(screen.data);
+  if (!screen.data["preview-states"]) {
+    screen.data["preview-states"] = states.map((state) => ({ ...state }));
+  }
+  const state = screen.data["preview-states"].find((candidate) => candidate.id === stateId);
+  if (!state || state.name === normalizedName) return;
+  state.name = normalizedName;
+  markEdited(screen.file);
+  renderPreviewStateControls(screen.data);
+  renderInspector();
+}
+
+async function switchPreviewState(stateId) {
+  const screen = screens[activeScreenIndex];
+  const states = getScreenPreviewStates(screen.data);
+  if (!states.some((state) => state.id === stateId)) {
+    throw new Error(`Unknown preview state "${stateId}".`);
+  }
+  const screenIndex = activeScreenIndex;
+  activePreviewStateIds.set(screen.id, stateId);
+  await renderScreen(screenIndex, { previewStateSelected: true });
+}
+
+async function addPreviewState() {
+  const screen = screens[activeScreenIndex];
+  const screenIndex = activeScreenIndex;
+  const states = getScreenPreviewStates(screen.data);
+  let number = 2;
+  while (states.some((state) => state.id === `state-${number}`)) number += 1;
+  if (!screen.data["preview-states"]) {
+    screen.data["preview-states"] = states.map((state) => ({ ...state }));
+  }
+  const newState = { id: `state-${number}`, name: `State ${number}` };
+  screen.data["preview-states"].push(newState);
+  activePreviewStateIds.set(screen.id, newState.id);
+  markEdited(screen.file);
+  await renderScreen(screenIndex, { previewStateSelected: true });
+  const nameInput = byId("preview-state-name-detail");
+  nameInput?.focus();
+  nameInput?.select();
+}
+
+function removeStateVisibility(instance, stateId) {
+  if (instance.visibility) {
+    delete instance.visibility[stateId];
+    if (Object.keys(instance.visibility).length === 0) delete instance.visibility;
+  }
+  for (const children of Object.values(instance.slots || {})) {
+    if (Array.isArray(children)) children.forEach((child) => removeStateVisibility(child, stateId));
+  }
+}
+
+function renderScreenInstanceTree(panel, instances, parentPath = [], depth = 0, stateId = "default") {
+  if (!Array.isArray(instances)) return;
+  instances.forEach((instance, index) => {
+    const path = parentPath.length ? [...parentPath, index] : [index];
+    const template = assets.get(instance["asset-template"]);
+    const label = instance.name || template?.data.name || instance["asset-template"];
+    const visible = path.length === 1 || isInstanceVisible(instance, stateId);
+    const button = element(
+      "button",
+      "instance-tree-button",
+      `${label} · ${visible ? "Visible" : "Hidden"}`
+    );
+    button.type = "button";
+    button.style.paddingLeft = `${10 + depth * 14}px`;
+    button.setAttribute("aria-label", `Select ${label}; ${visible ? "visible" : "hidden"} in this preview state`);
+    button.addEventListener("click", () => selectInstance(path, instance["asset-template"]));
+    panel.append(button);
+    for (const [slotId, children] of Object.entries(instance.slots || {})) {
+      if (!Array.isArray(children)) continue;
+      renderScreenInstanceTree(panel, children, [...path, slotId], depth + 1, stateId);
+    }
+  });
+}
+
+async function deletePreviewState(stateId) {
+  if (stateId === "default") return;
+  const screen = screens[activeScreenIndex];
+  const states = getScreenPreviewStates(screen.data);
+  const state = states.find((candidate) => candidate.id === stateId);
+  if (!state || !window.confirm(`Delete the "${state.name}" preview state and its visibility settings?`)) return;
+  const instancePath = [...activeInstancePath];
+  const keepPreviewStateSelected = viewingPreviewState;
+  const wasActive = activePreviewStateIds.get(screen.id) === stateId;
+  screen.data["preview-states"] = states.filter((candidate) => candidate.id !== stateId);
+  screen.data.assets.forEach((instance) => removeStateVisibility(instance, stateId));
+  if (wasActive) {
+    activePreviewStateIds.set(screen.id, "default");
+  }
+  markEdited(screen.file);
+  await renderScreen(activeScreenIndex, { previewStateSelected: keepPreviewStateSelected });
+  if (keepPreviewStateSelected) return;
+  const instance = getInstanceAtPath(screen, instancePath);
+  if (instance) selectInstance(instancePath, instance["asset-template"]);
 }
 
 function safeProjectUrl(path, base = appRoot) {
@@ -252,6 +401,7 @@ async function loadProject(selectionToRestore = null) {
     ]);
 
     screens = loadedScreens;
+    activePreviewStateIds.clear();
     assets = new Map(loadedAssets.map((asset) => [asset.id, asset]));
     for (const asset of loadedAssets) {
       if (asset.screen !== undefined && !screens.some((screen) => screen.id === asset.screen)) {
@@ -275,6 +425,7 @@ async function loadProject(selectionToRestore = null) {
     viewingTheme = false;
     viewingProject = false;
     viewingSpec = false;
+    viewingPreviewState = false;
     activeSpecPath = null;
     activeSpecInstancePath = [];
     activeSpecOwner = "instance";
@@ -290,6 +441,15 @@ async function loadProject(selectionToRestore = null) {
     if (isRenderOnly) {
       const renderIndex = screens.findIndex((screen) => screen.id === renderRequestedScreen);
       if (renderIndex < 0) throw new Error(`Unknown Screen "${renderRequestedScreen}".`);
+      if (renderRequestedState !== null) {
+        const renderScreenData = screens[renderIndex].data;
+        if (!getScreenPreviewStates(renderScreenData).some((state) => state.id === renderRequestedState)) {
+          throw new Error(
+            `Unknown preview state "${renderRequestedState}" for Screen "${renderRequestedScreen}".`
+          );
+        }
+        activePreviewStateIds.set(screens[renderIndex].id, renderRequestedState);
+      }
       await renderScreen(renderIndex);
       if (byId("screen-preview").classList.contains("error")) {
         throw new Error(byId("screen-preview").textContent.trim() || "Screen render failed.");
@@ -1037,7 +1197,7 @@ function showAddAssetError(error) {
   showEditorMessage("Could not add asset", error.message || String(error));
 }
 
-async function renderScreen(index) {
+async function renderScreen(index, options = {}) {
   const selected = screens[index];
   if (!selected) return;
   closeAssetContextMenu();
@@ -1057,6 +1217,7 @@ async function renderScreen(index) {
   viewingTheme = false;
   viewingProject = false;
   viewingSpec = false;
+  viewingPreviewState = options.previewStateSelected === true;
   activeSpecPath = null;
   activeSpecInstancePath = [];
   activeAssetId = null;
@@ -1066,6 +1227,7 @@ async function renderScreen(index) {
   updateScreenDomContext(selected);
   byId("screen-heading").textContent = selected.data.name || selected.id;
   byId("breadcrumb").textContent = "Screens";
+  renderPreviewStateControls(selected.data);
 
   const preview = byId("screen-preview");
   preview.className = "screen-preview";
@@ -1116,6 +1278,7 @@ async function renderScreen(index) {
 }
 
 async function renderSpecEditor(filePath, instancePath = activeInstancePath, owner = "instance") {
+  hidePreviewStateControls();
   sharedValidation.validateSpecPath(filePath);
   const screen = screens[activeScreenIndex];
   const draft = createdSpecDrafts.get(filePath);
@@ -1138,6 +1301,7 @@ async function renderSpecEditor(filePath, instancePath = activeInstancePath, own
   viewingAssetTemplate = false;
   viewingTheme = false;
   viewingProject = false;
+  viewingPreviewState = false;
   viewingSpec = true;
   activeSpecPath = filePath;
   activeSpecOwner = owner;
@@ -1277,6 +1441,7 @@ async function createProjectSpec() {
 
 function renderProjectOverview() {
   if (!project) return;
+  hidePreviewStateControls();
   closeAssetContextMenu();
   clearTimeout(assetPreviewTimer);
   assetPreviewTimer = null;
@@ -1293,6 +1458,7 @@ function renderProjectOverview() {
   viewingTheme = false;
   viewingProject = true;
   viewingSpec = false;
+  viewingPreviewState = false;
   activeSpecPath = null;
   activeSpecInstancePath = [];
   activeAssetId = null;
@@ -1379,6 +1545,7 @@ function renderProjectOverview() {
 async function renderAssetTemplate(assetId) {
   const template = assets.get(assetId);
   if (!template) return;
+  hidePreviewStateControls();
   closeAssetContextMenu();
   updateScreenDomContext(null);
   clearTimeout(assetPreviewTimer);
@@ -1386,6 +1553,7 @@ async function renderAssetTemplate(assetId) {
   viewingTheme = false;
   viewingProject = false;
   viewingSpec = false;
+  viewingPreviewState = false;
   activeSpecPath = null;
   activeSpecInstancePath = [];
   activeAssetId = assetId;
@@ -1534,6 +1702,7 @@ async function renderInstance(instance, template, instancePath, screenId = "", s
   const host = element("div", "asset-instance");
   host.dataset.instancePath = JSON.stringify(instancePath);
   const isScreenRootLayout = screenId && instancePath.length === 1;
+  host.hidden = Boolean(screenId && !isScreenRootLayout && !isInstanceVisible(instance));
   if (!isScreenRootLayout) {
     host.dataset.openuxScreenId = screenId;
     host.dataset.openuxScreenName = screenName;
@@ -2051,6 +2220,7 @@ function selectInstance(path, assetId) {
   viewingTheme = false;
   viewingProject = false;
   viewingSpec = false;
+  viewingPreviewState = false;
   activeSpecPath = null;
   activeSpecInstancePath = [];
   byId("main").classList.remove("spec-editing");
@@ -2113,7 +2283,9 @@ function renderInspector() {
   const panel = byId("inspector-content");
   panel.replaceChildren(element("h2", "panel-heading", "Details"));
 
-  if (viewingProject) {
+  if (viewingPreviewState) {
+    renderPreviewStateDetails(panel);
+  } else if (viewingProject) {
     renderProjectDetails(panel);
   } else if (viewingTheme) {
     renderThemeDetails(panel);
@@ -2132,6 +2304,59 @@ function renderInspector() {
       renderScreenDetails(panel, screen);
       renderReviewControls(panel);
     }
+  }
+}
+
+function renderPreviewStateDetails(panel) {
+  const screen = screens[activeScreenIndex];
+  const stateId = getActivePreviewStateId(screen.data);
+  const state = getScreenPreviewStates(screen.data).find((candidate) => candidate.id === stateId);
+  if (!state) return;
+  appendSection(panel, "Preview state");
+  appendEditableField(panel, "State name", state.name, (value) => renamePreviewState(stateId, value), {
+    id: "preview-state-name-detail"
+  });
+  appendDetail(panel, "State ID", state.id);
+  if (stateId !== "default") {
+    const deleteButton = element("button", "spec-action-button", `Delete ${state.name}`);
+    deleteButton.type = "button";
+    deleteButton.addEventListener("click", () => deletePreviewState(stateId).catch(showFatalError));
+    panel.append(deleteButton);
+  }
+  appendSection(panel, "Asset visibility");
+  let visibleInstances = 0;
+  function renderInstanceVisibility(instance, instancePath, depth) {
+    const template = assets.get(instance["asset-template"]);
+    const label = instance.name || template?.data.name || instance["asset-template"];
+    if (instancePath.length > 1) {
+      visibleInstances += 1;
+      appendEditableField(
+        panel,
+        `${"— ".repeat(depth)}${label}`,
+        isInstanceVisible(instance, stateId),
+        (visible) => {
+          instance.visibility ||= {};
+          if (visible) delete instance.visibility[stateId];
+          else instance.visibility[stateId] = false;
+          if (Object.keys(instance.visibility).length === 0) delete instance.visibility;
+          markEdited(screen.file);
+          renderScreen(activeScreenIndex, { previewStateSelected: true }).catch(showFatalError);
+        },
+        { checkbox: true }
+      );
+    }
+    for (const [slotId, children] of Object.entries(instance.slots || {})) {
+      if (!Array.isArray(children)) continue;
+      children.forEach((child, index) =>
+        renderInstanceVisibility(child, [...instancePath, slotId, index], depth + 1)
+      );
+    }
+  }
+  (screen.data.assets || []).forEach((instance, index) =>
+    renderInstanceVisibility(instance, [index], 0)
+  );
+  if (visibleInstances === 0) {
+    appendDetail(panel, "Assets", "This Screen has no nested asset instances.");
   }
 }
 
@@ -2211,6 +2436,18 @@ function renderScreenDetails(panel, screen) {
     markEdited(screens[activeScreenIndex].file);
     refreshActiveView();
   }, { multiline: true });
+  appendSection(panel, "Other preview states");
+  const activeStateId = getActivePreviewStateId(screen);
+  const states = getScreenPreviewStates(screen);
+  for (const state of states) {
+    if (state.id === "default" || state.id === activeStateId) continue;
+    const deleteButton = element("button", "spec-action-button", `Delete ${state.name}`);
+    deleteButton.type = "button";
+    deleteButton.addEventListener("click", () => deletePreviewState(state.id).catch(showFatalError));
+    panel.append(deleteButton);
+  }
+  appendSection(panel, "Assets in Screen");
+  renderScreenInstanceTree(panel, screen.assets || [], [], 0, activeStateId);
 }
 
 function renderThemeDetails(panel) {
@@ -2345,8 +2582,28 @@ function renderInstanceDetails(panel, instance, template) {
     instance.description = value;
     markEdited(screens[activeScreenIndex].file);
     refreshActiveView();
-  }, { multiline: true });
+  }, { multiline: true   });
   panel.append(element("span", "template-tag", `${template.data.name || template.id} template`));
+  if (activeInstancePath.length > 1) {
+    const screen = screens[activeScreenIndex];
+    const stateId = getActivePreviewStateId(screen.data);
+    const state = getScreenPreviewStates(screen.data).find((candidate) => candidate.id === stateId);
+    appendSection(panel, `Visibility · ${state?.name || "Default"}`);
+    appendEditableField(
+      panel,
+      `Visible in ${state?.name || "Default"}`,
+      isInstanceVisible(instance, stateId),
+      (visible) => {
+        instance.visibility ||= {};
+        if (visible) delete instance.visibility[stateId];
+        else instance.visibility[stateId] = false;
+        if (Object.keys(instance.visibility).length === 0) delete instance.visibility;
+        markEdited(screen.file);
+        refreshActiveView();
+      },
+      { checkbox: true }
+    );
+  }
   if (template.data.slots) {
     appendSection(panel, "Drop zones");
     for (const slot of template.data.slots) {
@@ -2510,7 +2767,7 @@ function attributeInputOptions(definition) {
 function appendEditableField(parent, label, value, onChange, options = {}) {
   const wrapper = element("div", options.checkbox ? "editor-field checkbox" : "editor-field");
   const input = element(options.multiline ? "textarea" : options.selectOptions ? "select" : "input");
-  const inputId = `editor-field-${editorFieldId++}`;
+  const inputId = options.id || `editor-field-${editorFieldId++}`;
   input.id = inputId;
 
   if (options.checkbox) {
@@ -2800,6 +3057,7 @@ byId("save-project").addEventListener("click", () => saveProjectChanges());
 
 byId("theme-nav").addEventListener("click", () => {
   if (!theme) return;
+  hidePreviewStateControls();
   clearTimeout(assetPreviewTimer);
   assetPreviewTimer = null;
   assetPreviewVersion += 1;
@@ -2814,6 +3072,7 @@ byId("theme-nav").addEventListener("click", () => {
   viewingAssetTemplate = false;
   viewingProject = false;
   viewingSpec = false;
+  viewingPreviewState = false;
   activeSpecPath = null;
   activeSpecInstancePath = [];
   activeAssetId = null;

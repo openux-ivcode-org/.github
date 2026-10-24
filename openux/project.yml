@@ -2,10 +2,10 @@ name: OpenUX Example
 description: Example project for the OpenUX file-driven preview.
 openux: "0.1.0-SNAPSHOT"
 screens:
-  - id: sign-in
-    file: screens/sign-in.yml
   - id: home
     file: screens/home.yml
+  - id: sign-in
+    file: screens/sign-in.yml
 assets:
   - id: sign-in-layout
     directory: assets/sign-in-layout
@@ -63,5 +63,8 @@ assets:
     screen: home
   - id: dashboard-insights
     directory: assets/dashboard-insights
+    screen: home
+  - id: dashboard-dialog
+    directory: assets/dashboard-dialog
     screen: home
 theme: theme/theme.yml

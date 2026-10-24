@@ -439,13 +439,77 @@
     .stage {
       min-height: 0;
       flex: 1;
-      display: grid;
-      place-items: stretch;
+      display: flex;
+      flex-direction: column;
       overflow: auto;
       padding: 0;
       border: 0;
       border-radius: 0;
       background: transparent;
+    }
+
+    .preview-state-toolbar {
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    .preview-state-toolbar[hidden] { display: none; }
+    .preview-state-label {
+      color: var(--ui-text-medium);
+      font-size: 11px;
+      font-weight: 650;
+    }
+    .preview-state-select {
+      min-width: 160px;
+      max-width: min(360px, 55%);
+      padding: 7px 28px 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      color: var(--ui-text-strong);
+      background: var(--panel);
+      font: inherit;
+      font-size: 11px;
+    }
+    .preview-state-add {
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      color: var(--ui-primary);
+      background: var(--panel);
+      font: inherit;
+      font-size: 11px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .preview-state-select:focus-visible, .preview-state-add:focus-visible {
+      outline: 2px solid var(--studio-focus);
+      outline-offset: 2px;
+    }
+    .instance-tree-button {
+      width: 100%;
+      margin: 2px 0;
+      padding: 8px 10px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      color: var(--ui-text-medium);
+      background: transparent;
+      font: inherit;
+      font-size: 11px;
+      text-align: left;
+      overflow-wrap: anywhere;
+      cursor: pointer;
+    }
+    .instance-tree-button:hover {
+      border-color: var(--line);
+      background: var(--ui-input-alt);
+    }
+    .instance-tree-button:focus-visible {
+      outline: 2px solid var(--studio-focus);
+      outline-offset: 1px;
     }
 
     .stage.drop-target {
@@ -603,7 +667,8 @@
       position: relative;
       contain: layout paint;
       width: 100%;
-      min-height: 100%;
+      min-height: 0;
+      flex: 1;
       overflow: auto;
       border: 0;
       border-radius: 0;
@@ -740,6 +805,7 @@
       border-radius: 9px;
       cursor: pointer;
     }
+    .asset-instance[hidden] { display: none !important; }
 
     .asset-instance:hover { border-color: var(--studio-border); }
     .asset-instance.selected {
@@ -1151,6 +1217,7 @@
     body.render-only .canvas { width: 100%; height: 100vh; min-height: 100vh; padding: 0; background: none; }
     body.render-only .stage { width: 100%; height: 100vh; min-height: 100vh; overflow: visible; }
     body.render-only .screen-preview { width: 100%; height: 100vh; min-height: 100vh; overflow: visible; }
+    body.render-only .preview-state-toolbar { display: none; }
   </style>
 </head>
 <body>
@@ -1191,6 +1258,11 @@
 
     <main class="canvas" id="main">
       <section class="stage" id="screen-stage" aria-label="Rendered Screen preview; drop an asset here to add it">
+        <div class="preview-state-toolbar" id="preview-state-toolbar" aria-label="Screen preview states" hidden>
+          <label class="preview-state-label" for="preview-state-select">Preview state</label>
+          <select class="preview-state-select" id="preview-state-select"></select>
+          <button class="preview-state-add" id="add-preview-state" type="button">Add state</button>
+        </div>
         <article class="screen-preview loading" id="screen-preview" aria-label="Rendered Screen preview">
           <div class="loading-message">Reading project files...</div>
         </article>

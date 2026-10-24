@@ -31,7 +31,7 @@ function usage() {
     "  openux validate [--project <directory>]",
     "  openux version",
     "  openux schema [project|screen|asset|theme|spec|reference]",
-    "  openux render <screen> --format <html|image> [--output <file>] [--project <directory>]",
+    "  openux render <screen> --format <html|image> [--state <id>] [--output <file>] [--project <directory>]",
     "  openux prune [--apply] [--project <directory>]"
   ].join("\n");
 }
@@ -68,6 +68,8 @@ function parseOptions(args, allowedFlags) {
       options.project = value;
     } else if (argument === "--output") {
       options.output = value;
+    } else if (argument === "--state") {
+      options.state = value;
     }
   }
   return { positional, options };
@@ -487,10 +489,10 @@ async function closeServer(server) {
 async function runRenderCommand(args) {
   const { positional, options } = parseOptions(
     args,
-    new Set(["--format", "--output", "--project"])
+    new Set(["--format", "--output", "--project", "--state"])
   );
   if (positional.length !== 1 || !options.format) {
-    throw new Error("Usage: openux render <screen> --format <html|image> [--output <file>] [--project <directory>]");
+    throw new Error("Usage: openux render <screen> --format <html|image> [--state <id>] [--output <file>] [--project <directory>]");
   }
   if (options.format === "image" && !options.output) {
     throw new Error("Image rendering requires --output <file>.");
@@ -502,8 +504,15 @@ async function runRenderCommand(args) {
     printValidationResult(validationResult);
     return 1;
   }
-  const screen = validationResult.project.screens.find((entry) => entry.id === positional[0]);
+  const screen = validationResult.screens.find((entry) => entry.id === positional[0]);
   if (!screen) throw new Error(`Unknown Screen "${positional[0]}".`);
+  if (options.state !== undefined &&
+      !screen.data["preview-states"]?.some((state) => state.id === options.state)) {
+    const states = screen.data["preview-states"] || [{ id: "default" }];
+    throw new Error(
+      `Unknown preview state "${options.state}" for Screen "${screen.id}". Available states: ${states.map((state) => state.id).join(", ")}.`
+    );
+  }
 
   const browser = findBrowserExecutable();
   if (!browser) {
@@ -523,6 +532,7 @@ async function runRenderCommand(args) {
     const url = new URL("/", `http://127.0.0.1:${address.port}`);
     url.searchParams.set("render", positional[0]);
     url.searchParams.set("format", options.format);
+    if (options.state !== undefined) url.searchParams.set("state", options.state);
     const timeoutMs = Number(process.env.OPENUX_RENDER_TIMEOUT_MS) || 60000;
     let result;
     if (options.format === "image") {

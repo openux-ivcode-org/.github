@@ -18,7 +18,7 @@ Run the commands as `openux ...` when the package's `bin` entry is available, or
 | `openux validate [--project <directory>]` | Validate project resources, asset bundles, local file references, and references between resources. |
 | `openux version` | Print the OpenUX format version supported by this CLI. `openux --version` is an alias. |
 | `openux schema [project\|screen\|asset\|theme\|spec\|reference]` | Print Markdown authoring guidance. Use `reference` for the version-matched authoring workflow; without a type, print all guidance. |
-| `openux render <screen> --format <html\|image> [--output <file>] [--project <directory>]` | Render a Screen by ID as HTML or a full-page image. |
+| `openux render <screen> --format <html\|image> [--state <id>] [--output <file>] [--project <directory>]` | Render a Screen by ID, optionally using one of its named preview states, as HTML or a full-page image. |
 | `openux prune [--apply] [--project <directory>]` | Report unused assets. No files are removed unless `--apply` is supplied. |
 
 `--port` selects the local server port for `server` commands. The status, selection, and update commands default to port `3000` or the `OPENUX_PORT` / `PORT` environment setting.
@@ -44,7 +44,10 @@ HTML is written to standard output unless `--output <file>` is given. Local proj
 ```sh
 openux render sign-in --format html --output sign-in.html
 openux render sign-in --format image --output sign-in.png
+openux render home --format image --state add-item-open --output home-dialog.png
 ```
+
+`--state <id>` selects a Screen's `preview-states[].id` for either output format. If omitted, the `default` state is rendered. The command reports an error when the state ID is not defined on that Screen.
 
 ## Pruning
 
@@ -57,5 +60,5 @@ Pruning is non-destructive by default: `openux prune` reports candidates without
 3. Read the version-matched authoring workflow with `openux schema reference`, then consult `openux schema [type]` for an artifact's format details.
 4. Edit project files directly.
 5. Run `openux validate` to catch malformed files and project-level issues.
-6. Run `openux render <screen> --format image --output <file>` to inspect the rendered result.
+6. Run `openux render <screen> --format image [--state <id>] --output <file>` to inspect the rendered result, including a named visual state when needed.
 7. Run `openux server update` to refresh the browser editor after making changes.

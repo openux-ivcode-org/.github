@@ -27,6 +27,7 @@ The browser editor prototype is at the repository root; its sample project is in
 | ED-019 | Expose the current Screen ID and name on each Screen navigation item and on major Screen-view containers, including the workspace context, main canvas, stage, and preview. Use the same `data-openux-screen-id` and `data-openux-screen-name` attributes defined in `screen.md`; omit Screen context when the preview is a standalone asset-template preview. |
 | ED-020 | Adapt the Studio interface to the operating system's light or dark color scheme, independently of the active project Theme, and respond to system preference changes while open. |
 | ED-021 | Support one optional project-level OpenSpec-formatted behavior spec referenced by `project.spec` for requirements that apply across multiple Screens or throughout the project. Let users create or edit it from the Project Overview and persist a new file and manifest reference together only when its draft changes; do not use it for Screen-specific behavior. |
+| ED-022 | Let each Screen define named visual preview states and switch the preview between them without altering authored data. Selecting a state replaces the Details panel with that state's name, actions, and per-instance visibility controls. Keep the Screen root layout visible and allow selecting hidden instances from the Screen asset tree. |
 
 ## Target Page Layout (Proposed)
 

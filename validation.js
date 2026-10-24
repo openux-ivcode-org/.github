@@ -15,6 +15,35 @@
     return value !== null && typeof value === "object" && !Array.isArray(value);
   }
 
+  function getPreviewStates(screen) {
+    return screen["preview-states"] === undefined
+      ? [{ id: "default", name: "Default" }]
+      : screen["preview-states"];
+  }
+
+  function validatePreviewStates(screen, source) {
+    const states = getPreviewStates(screen);
+    if (!Array.isArray(states) || states.length === 0) {
+      throw new Error(`${source} preview-states must be a non-empty list.`);
+    }
+    const ids = new Set();
+    for (const state of states) {
+      if (!isMapping(state) || typeof state.id !== "string" || !/^[a-z][a-z0-9-]*$/.test(state.id)) {
+        throw new Error(`${source} preview-states must have an id using lowercase letters, numbers, and hyphens.`);
+      }
+      if (ids.has(state.id)) throw new Error(`${source} defines preview state "${state.id}" more than once.`);
+      if (typeof state.name !== "string" || !state.name.trim()) {
+        throw new Error(`${source} preview state "${state.id}" must have a non-empty name.`);
+      }
+      if (Object.keys(state).some((key) => key !== "id" && key !== "name")) {
+        throw new Error(`${source} preview state "${state.id}" has an unsupported property.`);
+      }
+      ids.add(state.id);
+    }
+    if (!ids.has("default")) throw new Error(`${source} preview-states must include the "default" state.`);
+    return states;
+  }
+
   function validateSpecPath(filePath) {
     if (typeof filePath !== "string" || !/^specs\/[a-z0-9]+(?:-[a-z0-9]+)*\.md$/.test(filePath)) {
       throw new Error('Behavior spec path must be "specs/<name>.md" with a lowercase kebab-case name.');
@@ -226,6 +255,7 @@
   return {
     assetCategoryPath,
     attributeTypes,
+    getPreviewStates,
     isMapping,
     isValidAttributeValue,
     numberFormats,
@@ -233,6 +263,7 @@
     validateAssetAttributes,
     validateAssetSlotMarkup,
     validateAssetSlots,
+    validatePreviewStates,
     validateSpecContent,
     validateSpecPath,
     validateTheme

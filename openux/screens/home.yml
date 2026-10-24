@@ -1,6 +1,11 @@
 name: Home
 description: Account overview with navigation, performance metrics, recent activity, and account insights.
 note: This example demonstrates a dashboard composed from a page layout, a nested content layout, and reusable components.
+preview-states:
+  - id: default
+    name: Dashboard
+  - id: add-item-open
+    name: Add item dialog open
 assets:
   - asset-template: dashboard-layout
     name: Account dashboard
@@ -53,3 +58,8 @@ assets:
             insights:
               - asset-template: dashboard-insights
                 name: Account insights
+        - asset-template: dashboard-dialog
+          name: Add item dialog
+          visibility:
+            default: false
+            add-item-open: true

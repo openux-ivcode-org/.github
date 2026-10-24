@@ -121,6 +121,58 @@ test("allows a Screen to remain empty while being built", async () => {
   }
 });
 
+test("validates preview states and per-instance visibility", async () => {
+  const root = await createProject();
+  try {
+    const screenPath = path.join(root, "screens", "home.yml");
+    const screen = YAML.parse(await fs.readFile(screenPath, "utf8"));
+    screen["preview-states"] = [
+      { id: "default", name: "Page" },
+      { id: "dialog-open", name: "Dialog open" }
+    ];
+    screen.assets[0].slots.content = [{
+      "asset-template": "unused",
+      name: "Dialog",
+      visibility: { default: false, "dialog-open": true }
+    }];
+    await fs.writeFile(screenPath, YAML.stringify(screen));
+
+    let result = await validateProject(root);
+    assert.deepEqual(result.errors, []);
+
+    const unknownState = spawnSync(process.execPath, [
+      cliPath,
+      "render",
+      "home",
+      "--format",
+      "html",
+      "--state",
+      "missing-state",
+      "--project",
+      root
+    ], { encoding: "utf8" });
+    assert.equal(unknownState.status, 1);
+    assert.match(unknownState.stderr, /Unknown preview state "missing-state".*default, dialog-open/);
+
+    screen.assets[0].slots.content[0].visibility = {
+      default: false,
+      "missing-state": true,
+      "dialog-open": "true"
+    };
+    await fs.writeFile(screenPath, YAML.stringify(screen));
+    result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes('unknown preview state "missing-state"')));
+    assert.ok(result.errors.some((error) => error.includes('visibility for preview state "dialog-open" must be a boolean')));
+
+    screen.assets[0].visibility = { default: false };
+    await fs.writeFile(screenPath, YAML.stringify(screen));
+    result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes("root layout cannot have state-specific visibility")));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("validates asset-instance behavior spec paths and referenced files", async () => {
   const root = await createProject();
   try {
