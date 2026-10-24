@@ -51,7 +51,7 @@ openux render home --format image --state add-item-open --output home-dialog.png
 
 ## Pruning
 
-Pruning is non-destructive by default: `openux prune` reports candidates without removing them. Applying the cleanup requires `--apply`. An asset is a candidate only when no Screen instance uses it, including instances nested in asset slots. Applying prune removes the candidate asset directory and its entry in `project.yml`. A project-level behavior spec is for requirements shared across Screens or throughout the project; Screen-specific behavior specs belong to the relevant asset instances, not to Screen files or asset templates.
+Pruning is non-destructive by default: `openux prune` reports candidates without removing them. Applying the cleanup requires `--apply`. An asset is a candidate only when no Screen instance uses it, including instances nested in asset slots. Applying prune removes the candidate asset directory and its entry in `project.yml`. A project-level behavior spec is for requirements shared across Screens or throughout the project; Screen-level specs describe page behavior and state activation, while asset-instance specs cover the behavior of individual controls or components.
 
 ## Intended workflow
 

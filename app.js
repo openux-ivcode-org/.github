@@ -128,6 +128,15 @@ function renamePreviewState(stateId, name) {
   renderInspector();
 }
 
+function describePreviewState(stateId, description) {
+  const screen = screens[activeScreenIndex];
+  const states = screen.data["preview-states"];
+  const state = states?.find((candidate) => candidate.id === stateId);
+  if (!state || state.description === description) return;
+  state.description = description;
+  markEdited(screen.file);
+}
+
 async function switchPreviewState(stateId) {
   const screen = screens[activeScreenIndex];
   const states = getScreenPreviewStates(screen.data);
@@ -148,14 +157,12 @@ async function addPreviewState() {
   if (!screen.data["preview-states"]) {
     screen.data["preview-states"] = states.map((state) => ({ ...state }));
   }
-  const newState = { id: `state-${number}`, name: `State ${number}` };
+  const newState = { id: `state-${number}`, name: `State ${number}`, description: "" };
   screen.data["preview-states"].push(newState);
   activePreviewStateIds.set(screen.id, newState.id);
   markEdited(screen.file);
   await renderScreen(screenIndex, { previewStateSelected: true });
-  const nameInput = byId("preview-state-name-detail");
-  nameInput?.focus();
-  nameInput?.select();
+  byId("preview-state-description-detail")?.focus();
 }
 
 function removeStateVisibility(instance, stateId) {
@@ -410,6 +417,10 @@ async function loadProject(selectionToRestore = null) {
     }
     const specPaths = new Set();
     for (const screen of screens) {
+      if (screen.data.spec !== undefined) {
+        sharedValidation.validateSpecPath(screen.data.spec);
+        specPaths.add(screen.data.spec);
+      }
       for (const instance of screen.data.assets || []) collectInstanceSpecPaths(instance, specPaths);
     }
     if (project.spec !== undefined) {
@@ -1283,11 +1294,21 @@ async function renderSpecEditor(filePath, instancePath = activeInstancePath, own
   const screen = screens[activeScreenIndex];
   const draft = createdSpecDrafts.get(filePath);
   const isProjectSpec = owner === "project";
-  const instance = !isProjectSpec && screen ? getInstanceAtPath(screen, instancePath) : null;
-  if (isProjectSpec
-    ? project.spec !== filePath && draft?.owner !== "project"
-    : !instance || (instance.spec !== filePath && draft?.owner !== "instance")) {
-    throw new Error(`Behavior spec "${filePath}" is not attached to the project or selected asset instance.`);
+  const isScreenSpec = owner === "screen";
+  const isScreenDraft = isScreenSpec && draft?.owner === "screen" && draft.screenFile === screen?.file;
+  const instance = !isProjectSpec && !isScreenSpec && screen
+    ? getInstanceAtPath(screen, instancePath)
+    : null;
+  if (isProjectSpec) {
+    if (project.spec !== filePath && draft?.owner !== "project") {
+      throw new Error(`Behavior spec "${filePath}" is not attached to the project.`);
+    }
+  } else if (isScreenSpec) {
+    if (!screen || (screen.data.spec !== filePath && !isScreenDraft)) {
+      throw new Error(`Behavior spec "${filePath}" is not attached to the selected Screen.`);
+    }
+  } else if (!instance || (instance.spec !== filePath && draft?.owner !== "instance")) {
+    throw new Error(`Behavior spec "${filePath}" is not attached to the selected asset instance.`);
   }
   if (!specSources.has(filePath)) specSources.set(filePath, await loadText(filePath));
 
@@ -1305,14 +1326,18 @@ async function renderSpecEditor(filePath, instancePath = activeInstancePath, own
   viewingSpec = true;
   activeSpecPath = filePath;
   activeSpecOwner = owner;
-  activeSpecInstancePath = isProjectSpec ? [] : [...instancePath];
+  activeSpecInstancePath = isProjectSpec || isScreenSpec ? [] : [...instancePath];
   activeAssetId = instance?.["asset-template"] || null;
-  activeInstancePath = isProjectSpec ? [] : [...instancePath];
+  activeInstancePath = isProjectSpec || isScreenSpec ? [] : [...instancePath];
   hideEditorMessage();
   updateNavigationSelection();
   byId("screen-stage").setAttribute(
     "aria-label",
-    isProjectSpec ? "Project overview linked to its behavior spec" : "Screen preview linked to the selected behavior spec"
+    isProjectSpec
+      ? "Project overview linked to its behavior spec"
+      : isScreenSpec
+        ? "Screen preview linked to its behavior spec"
+        : "Screen preview linked to the selected asset behavior spec"
   );
   byId("screen-heading").textContent = `Spec: ${filePath}`;
   byId("breadcrumb").textContent = "Behavior spec";
@@ -1333,10 +1358,14 @@ async function renderSpecEditor(filePath, instancePath = activeInstancePath, own
     const pendingDraft = createdSpecDrafts.get(filePath);
     if (pendingDraft) {
       const draftScreen = screens.find((entry) => entry.file === pendingDraft.screenFile);
-      const draftInstance = draftScreen && getInstanceAtPath(draftScreen, pendingDraft.instancePath);
+      const draftInstance = draftScreen && pendingDraft.owner === "instance"
+        ? getInstanceAtPath(draftScreen, pendingDraft.instancePath)
+        : null;
       if (source === pendingDraft.initialContent) {
         if (pendingDraft.owner === "project") {
           if (project.spec === filePath) delete project.spec;
+        } else if (pendingDraft.owner === "screen") {
+          if (draftScreen?.data.spec === filePath) delete draftScreen.data.spec;
         } else if (draftInstance?.spec === filePath) {
           delete draftInstance.spec;
         }
@@ -1346,6 +1375,7 @@ async function renderSpecEditor(filePath, instancePath = activeInstancePath, own
         return;
       }
       if (pendingDraft.owner === "project") project.spec = filePath;
+      else if (pendingDraft.owner === "screen" && draftScreen) draftScreen.data.spec = filePath;
       else if (draftInstance) draftInstance.spec = filePath;
       createdSpecFiles.add(filePath);
     }
@@ -1437,6 +1467,56 @@ async function createProjectSpec() {
     projectFile: "project.yml"
   });
   await renderSpecEditor(filePath, [], "project");
+}
+
+async function createSpecForScreen() {
+  const screen = screens[activeScreenIndex];
+  if (!screen) throw new Error("The selected Screen is no longer available.");
+  if (screen.data.spec) {
+    await renderSpecEditor(screen.data.spec, [], "screen");
+    return;
+  }
+  const pendingDraft = [...createdSpecDrafts.entries()].find(([, draft]) =>
+    draft.owner === "screen" && draft.screenFile === screen.file
+  );
+  if (pendingDraft) {
+    await renderSpecEditor(pendingDraft[0], [], "screen");
+    return;
+  }
+
+  const baseName = `${screen.id}-behavior`;
+  let filePath;
+  for (let suffix = 1; ; suffix += 1) {
+    const name = suffix === 1 ? baseName : `${baseName}-${suffix}`;
+    filePath = `specs/${name}.md`;
+    sharedValidation.validateSpecPath(filePath);
+    if (specSources.has(filePath)) continue;
+    const response = await fetch(safeProjectUrl(filePath));
+    if (response.status === 404) break;
+    if (!response.ok) {
+      throw new Error(`Could not check whether behavior spec "${filePath}" already exists (HTTP ${response.status}).`);
+    }
+  }
+  const heading = (screen.data.name || screen.id).replace(/\r?\n/g, " ").trim();
+  const states = getScreenPreviewStates(screen.data).filter((state) => state.id !== "default");
+  const scenarios = states.length ? states.map((state) => [
+    `#### Scenario: ${state.name.replace(/\r?\n/g, " ").trim() || state.id} is active`,
+    `- **WHEN** the condition for ${state.id} occurs`,
+    "- **THEN** the Screen reflects that condition.",
+    `- **SHOW** ${state.id}`
+  ].join("\n")).join("\n\n") : [
+    "#### Scenario: The Screen is displayed",
+    "- **WHEN** the user navigates to this Screen",
+    "- **THEN** the Screen is displayed."
+  ].join("\n");
+  const source = `# ${heading} behavior\n\n## Purpose\n\nDescribe when this Screen's named visual states become active.\n\n## Requirements\n\n### Requirement: Show the matching preview state\nThe Screen SHALL show each named preview state when its activation condition is met.\n\n${scenarios}\n`;
+  specSources.set(filePath, source);
+  createdSpecDrafts.set(filePath, {
+    owner: "screen",
+    initialContent: source,
+    screenFile: screen.file
+  });
+  await renderSpecEditor(filePath, [], "screen");
 }
 
 function renderProjectOverview() {
@@ -1534,7 +1614,7 @@ function renderProjectOverview() {
   configuration.append(element(
     "p",
     "project-overview-config-note",
-    "Project-wide specs are for behavior shared across Screens; Screen-specific behavior belongs on its relevant asset instances, never on a Screen or asset template."
+    "Project-wide specs cover behavior shared across Screens. Use a Screen-level spec for page behavior and preview-state activation, and asset-instance specs for individual controls or components."
   ));
   sections.append(configuration);
   content.append(sections);
@@ -2316,6 +2396,15 @@ function renderPreviewStateDetails(panel) {
   appendEditableField(panel, "State name", state.name, (value) => renamePreviewState(stateId, value), {
     id: "preview-state-name-detail"
   });
+  if (stateId !== "default") {
+    appendEditableField(
+      panel,
+      "Description (required)",
+      state.description || "",
+      (value) => describePreviewState(stateId, value),
+      { id: "preview-state-description-detail", multiline: true, required: true }
+    );
+  }
   appendDetail(panel, "State ID", state.id);
   if (stateId !== "default") {
     const deleteButton = element("button", "spec-action-button", `Delete ${state.name}`);
@@ -2408,6 +2497,13 @@ function renderSpecDetails(panel) {
     return;
   }
   const screen = screens[activeScreenIndex];
+  if (activeSpecOwner === "screen") {
+    appendSection(panel, "Screen behavior spec");
+    appendDetail(panel, "File", activeSpecPath || "Unavailable");
+    appendDetail(panel, "Screen", screen?.data.name || screen?.id || "Unavailable");
+    appendDetail(panel, "Format", "OpenSpec behavior contract; use SHOW <state-id> after THEN for preview states.");
+    return;
+  }
   const instance = screen && getInstanceAtPath(screen, activeSpecInstancePath);
   const template = instance && assets.get(instance["asset-template"]);
   appendSection(panel, "Behavior spec");
@@ -2436,6 +2532,36 @@ function renderScreenDetails(panel, screen) {
     markEdited(screens[activeScreenIndex].file);
     refreshActiveView();
   }, { multiline: true });
+  appendSection(panel, "Screen behavior spec");
+  const pendingSpec = [...createdSpecDrafts.entries()].find(([, draft]) =>
+    draft.owner === "screen" && draft.screenFile === screens[activeScreenIndex].file
+  );
+  const screenSpecPath = screen.spec || pendingSpec?.[0];
+  if (screenSpecPath) {
+    appendDetail(panel, "File", screenSpecPath);
+    const openSpec = element(
+      "button",
+      "spec-action-button",
+      screen.spec ? "Open Screen behavior spec" : "Open Screen behavior spec draft"
+    );
+    openSpec.type = "button";
+    openSpec.addEventListener("click", () =>
+      renderSpecEditor(screenSpecPath, [], "screen").catch((error) =>
+        showEditorMessage("Could not open Screen behavior spec", error.message || String(error))
+      )
+    );
+    panel.append(openSpec);
+  } else {
+    appendDetail(panel, "File", "No Screen behavior spec attached.");
+    const createSpec = element("button", "spec-action-button", "Create Screen behavior spec");
+    createSpec.type = "button";
+    createSpec.addEventListener("click", () =>
+      createSpecForScreen().catch((error) =>
+        showEditorMessage("Could not create Screen behavior spec", error.message || String(error))
+      )
+    );
+    panel.append(createSpec);
+  }
   appendSection(panel, "Other preview states");
   const activeStateId = getActivePreviewStateId(screen);
   const states = getScreenPreviewStates(screen);
@@ -2769,6 +2895,7 @@ function appendEditableField(parent, label, value, onChange, options = {}) {
   const input = element(options.multiline ? "textarea" : options.selectOptions ? "select" : "input");
   const inputId = options.id || `editor-field-${editorFieldId++}`;
   input.id = inputId;
+  if (options.required) input.required = true;
 
   if (options.checkbox) {
     input.type = "checkbox";
@@ -2937,6 +3064,11 @@ async function saveProjectChanges() {
       continue;
     }
     const screen = screens.find((entry) => entry.file === draft.screenFile);
+    if (draft.owner === "screen" && screen) {
+      screen.data.spec = filePath;
+      createdSpecFiles.add(filePath);
+      continue;
+    }
     const instance = screen && getInstanceAtPath(screen, draft.instancePath);
     if (!instance) {
       createdSpecDrafts.delete(filePath);
@@ -2947,6 +3079,32 @@ async function saveProjectChanges() {
     }
     instance.spec = filePath;
     createdSpecFiles.add(filePath);
+  }
+  for (const screen of screens) {
+    try {
+      const states = sharedValidation.validatePreviewStates(screen.data, screen.file);
+      const linkedSpecPaths = new Set();
+      if (screen.data.spec) {
+        sharedValidation.validateSpecPath(screen.data.spec);
+        linkedSpecPaths.add(screen.data.spec);
+      }
+      for (const instance of screen.data.assets || []) {
+        collectInstanceSpecPaths(instance, linkedSpecPaths);
+      }
+      const linkedSpecs = [];
+      for (const specPath of linkedSpecPaths) {
+        const content = specSources.get(specPath);
+        if (content === undefined) {
+          throw new Error(`${screen.file}: linked behavior spec "${specPath}" is not loaded.`);
+        }
+        sharedValidation.validateSpecContent(content);
+        linkedSpecs.push({ path: specPath, content });
+      }
+      sharedValidation.validateScreenSpecStateReferences(linkedSpecs, states, screen.file);
+    } catch (error) {
+      showEditorMessage("Could not save changes", error.message || String(error));
+      return;
+    }
   }
   if (dirtyFiles.size === 0) return;
   const saveEntries = new Map([...dirtyFiles].map(([filePath, version]) => [
@@ -2994,8 +3152,12 @@ async function saveProjectChanges() {
           project.spec = file.path;
         } else {
           const screen = screens.find((entry) => entry.file === draft.screenFile);
-          const instance = screen && getInstanceAtPath(screen, draft.instancePath);
-          if (instance) instance.spec = file.path;
+          if (draft.owner === "screen") {
+            if (screen) screen.data.spec = file.path;
+          } else {
+            const instance = screen && getInstanceAtPath(screen, draft.instancePath);
+            if (instance) instance.spec = file.path;
+          }
         }
         createdSpecDrafts.delete(file.path);
         if (activeSpecPath === file.path) byId("spec-status").textContent = "Saved.";

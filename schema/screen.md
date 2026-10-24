@@ -11,12 +11,13 @@ The Screen file has these properties:
 | `name` | string | Yes | Human-readable Screen name. |
 | `description` | string | Yes | Description of the Screen. |
 | `note` | string | No | Implementation guidance for the Screen. |
+| `spec` | string | No | Path to this Screen's Markdown behavior spec under `specs/`. |
 | `assets` | list | Yes | Zero or one root asset instance. An empty list is allowed while building the Screen; when populated, the root instance must define the layout. |
 | `preview-states` | list | No | Named visual states for previewing this Screen. If omitted, the Screen has an implicit `default` state. |
 
 The Screen ID is defined by the matching `screens[].id` in `project.yml`; do not add an `id` property to the Screen file.
 
-Screen-level behavior specs are not supported. Do not add a top-level `spec` property; attach each behavior spec to the relevant asset instance.
+Use the Screen-level `spec` for behavior spanning the page, including activation conditions for its preview states. Keep individual control behavior in the relevant asset-instance specs.
 
 ## Preview States
 
@@ -26,8 +27,11 @@ Each item in `preview-states` is a mapping with these properties:
 |---|---|---:|---|
 | `id` | string | Yes | Unique state identifier using lowercase letters, numbers, and hyphens. The `default` state is required. |
 | `name` | string | Yes | Non-empty label shown in the Studio preview-state selector. |
+| `description` | string | Yes, except for `default` | Non-empty description of the visual state. |
 
-Preview states are editor-only visual configurations; they do not define application navigation or executable behavior. The Studio starts in `default`. Select another state to preview its visibility configuration without changing the Screen's authored defaults.
+Every non-default preview state must have a non-empty description. The implicit or explicit `default` state does not require one. Preview states are editor-only visual configurations; they do not define application navigation or executable behavior. The Studio starts in `default`. Select another state to preview its visibility configuration without changing the Screen's authored defaults.
+
+When a Screen defines non-default preview states, each state ID must appear in at least one scenario step in a behavior spec linked to that Screen or one of its asset instances. Write the step as `- **SHOW** <state-id>` after that scenario's `THEN` step. `SHOW` records which preview state represents the scenario outcome; it does not make the state executable.
 
 ## Asset Instance Properties
 
@@ -80,6 +84,8 @@ preview-states:
     name: Screen
   - id: add-item-open
     name: Add item dialog open
+    description: Show the Add item dialog over the page.
+spec: specs/home-behavior.md
 assets:
   - asset-template: page-layout
     slots:

@@ -121,7 +121,7 @@ async function validateProject(projectRoot) {
   if (!Array.isArray(project.screens)) errors.push("project.yml: screens must be a list.");
   if (!Array.isArray(project.assets)) errors.push("project.yml: assets must be a list.");
   if (Object.hasOwn(project, "workflows")) {
-    errors.push("project.yml: workflows are no longer supported; use project.spec or an asset instance's spec.");
+    errors.push("project.yml: workflows are no longer supported; use project.spec, a Screen spec, or an asset instance's spec.");
   }
   if (project.spec !== undefined) {
     try {
@@ -241,17 +241,26 @@ async function validateProject(projectRoot) {
     if (data) screens.push({ id: entry.id, file: entry.file, data });
   }
 
+  const linkedSpecsByScreen = new Map();
   for (const screen of screens) {
-    if (Object.hasOwn(screen.data, "spec")) {
-      errors.push(`${screen.file}: Screen-level behavior specs are not supported; attach specs to the relevant asset instances.`);
-    }
+    const linkedSpecPaths = new Set();
+    linkedSpecsByScreen.set(screen.file, linkedSpecPaths);
     let previewStateIds = new Set(["default"]);
+    let previewStates = [{ id: "default", name: "Default" }];
     try {
-      previewStateIds = new Set(
-        validation.validatePreviewStates(screen.data, screen.file).map((state) => state.id)
-      );
+      previewStates = validation.validatePreviewStates(screen.data, screen.file);
+      previewStateIds = new Set(previewStates.map((state) => state.id));
     } catch (error) {
       pushError(errors, screen.file, error);
+    }
+    if (screen.data.spec !== undefined) {
+      try {
+        validation.validateSpecPath(screen.data.spec);
+        referencedSpecPaths.add(screen.data.spec);
+        linkedSpecPaths.add(screen.data.spec);
+      } catch (error) {
+        pushError(errors, `${screen.file} spec`, error);
+      }
     }
     if (!Array.isArray(screen.data.assets)) {
       errors.push(`${screen.file}: Screen "${screen.id}" assets must be a list.`);
@@ -292,6 +301,7 @@ async function validateProject(projectRoot) {
         try {
           validation.validateSpecPath(instance.spec);
           referencedSpecPaths.add(instance.spec);
+          linkedSpecPaths.add(instance.spec);
         } catch (error) {
           pushError(errors, `${location} spec`, error);
         }
@@ -364,12 +374,29 @@ async function validateProject(projectRoot) {
     }
   }
 
+  const specContents = new Map();
   for (const specPath of referencedSpecPaths) {
     try {
       const target = await resolveProjectPath(projectRoot, specPath, "file");
-      validation.validateSpecContent(await fs.readFile(target, "utf8"));
+      const content = await fs.readFile(target, "utf8");
+      validation.validateSpecContent(content);
+      specContents.set(specPath, content);
     } catch (error) {
       pushError(errors, `Behavior spec "${specPath}"`, error);
+    }
+  }
+  for (const screen of screens) {
+    const stateSources = [...(linkedSpecsByScreen.get(screen.file) || [])]
+      .filter((specPath) => specContents.has(specPath))
+      .map((specPath) => ({ path: specPath, content: specContents.get(specPath) }));
+    try {
+      validation.validateScreenSpecStateReferences(
+        stateSources,
+        validation.validatePreviewStates(screen.data, screen.file),
+        screen.file
+      );
+    } catch (error) {
+      pushError(errors, `${screen.file} preview-state specs`, error);
     }
   }
 

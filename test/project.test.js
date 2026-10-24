@@ -128,17 +128,68 @@ test("validates preview states and per-instance visibility", async () => {
     const screen = YAML.parse(await fs.readFile(screenPath, "utf8"));
     screen["preview-states"] = [
       { id: "default", name: "Page" },
-      { id: "dialog-open", name: "Dialog open" }
+      {
+        id: "dialog-open",
+        name: "Dialog open",
+        description: "Show the dialog over the page."
+      },
+      {
+        id: "empty-state",
+        name: "Empty state",
+        description: "Show the page with no content."
+      }
     ];
+    screen.spec = "specs/home-behavior.md";
     screen.assets[0].slots.content = [{
       "asset-template": "unused",
       name: "Dialog",
+      spec: "specs/layout-behavior.md",
       visibility: { default: false, "dialog-open": true }
     }];
     await fs.writeFile(screenPath, YAML.stringify(screen));
+    const screenSpecPath = path.join(root, "specs", "home-behavior.md");
+    const screenSpec = validSpec.replace(
+      "- **THEN** the content appears in the content area.",
+      "- **THEN** the dialog is displayed over the page.\n- **SHOW** dialog-open"
+    );
+    const instanceSpec = validSpec.replace(
+      "- **THEN** the content appears in the content area.",
+      "- **THEN** the page has no content.\n- **SHOW** empty-state"
+    );
+    await fs.writeFile(screenSpecPath, screenSpec);
+    await fs.writeFile(path.join(root, "specs", "layout-behavior.md"), instanceSpec);
 
     let result = await validateProject(root);
     assert.deepEqual(result.errors, []);
+    assert.equal(result.referencedSpecPaths.has("specs/home-behavior.md"), true);
+
+    delete screen.spec;
+    screen.assets[0].slots.content[0].spec = "specs/layout-behavior.md";
+    await fs.writeFile(screenPath, YAML.stringify(screen));
+    const instanceOnlySpec = screenSpec.replace(
+      "- **SHOW** dialog-open",
+      "- **SHOW** dialog-open\n- **SHOW** empty-state"
+    );
+    await fs.writeFile(path.join(root, "specs", "layout-behavior.md"), instanceOnlySpec);
+    result = await validateProject(root);
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.referencedSpecPaths.has("specs/layout-behavior.md"), true);
+
+    await fs.writeFile(path.join(root, "specs", "layout-behavior.md"), instanceSpec);
+    result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes("must reference every non-default preview state with SHOW: dialog-open")));
+    await fs.writeFile(path.join(root, "specs", "layout-behavior.md"), instanceOnlySpec);
+
+    delete screen["preview-states"][1].description;
+    await fs.writeFile(screenPath, YAML.stringify(screen));
+    result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes('preview state "dialog-open" must have a non-empty description')));
+    screen["preview-states"][1].description = "   ";
+    await fs.writeFile(screenPath, YAML.stringify(screen));
+    result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes('preview state "dialog-open" must have a non-empty description')));
+    screen["preview-states"][1].description = "Show the dialog over the page.";
+    await fs.writeFile(screenPath, YAML.stringify(screen));
 
     const unknownState = spawnSync(process.execPath, [
       cliPath,
@@ -198,7 +249,7 @@ test("validates asset-instance behavior spec paths and referenced files", async 
   }
 });
 
-test("rejects behavior specs on Screen files and asset templates", async () => {
+test("allows Screen specs and rejects behavior specs on asset templates", async () => {
   const root = await createProject();
   try {
     const assetPath = path.join(root, "assets", "layout", "asset.yml");
@@ -216,10 +267,10 @@ test("rejects behavior specs on Screen files and asset templates", async () => {
     const screen = YAML.parse(await fs.readFile(screenPath, "utf8"));
     screen.spec = "specs/screen-behavior.md";
     await fs.writeFile(screenPath, YAML.stringify(screen));
+    await fs.writeFile(path.join(root, "specs", "screen-behavior.md"), validSpec);
     result = await validateProject(root);
-    assert.ok(result.errors.some((error) =>
-      error.includes("Screen-level behavior specs are not supported")
-    ));
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.referencedSpecPaths.has("specs/screen-behavior.md"), true);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -350,6 +401,36 @@ test("validates OpenSpec behavior spec requirements and scenarios", async () => 
   assert.throws(
     () => validation.validateSpecContent(validSpec.replace("- **THEN**", "- THEN")),
     /include "- \*\*WHEN\*\* \.\.\." and "- \*\*THEN\*\* \.\.\." steps/
+  );
+  const specWithShow = validSpec.replace(
+    "- **THEN** the content appears in the content area.",
+    "- **THEN** the content appears in the content area.\n- **SHOW** dialog-open"
+  );
+  assert.equal(validation.validateSpecContent(specWithShow), true);
+  assert.throws(
+    () => validation.validateSpecContent(
+      validSpec.replace(
+        "- **THEN** the content appears in the content area.",
+        "- **SHOW** dialog-open\n- **THEN** the content appears in the content area."
+      )
+    ),
+    /SHOW.*must follow/
+  );
+  assert.throws(
+    () => validation.validateScreenSpecStateReferences(
+      specWithShow,
+      [{ id: "default" }, { id: "dialog-open" }, { id: "missing-state" }],
+      "screens/home.yml spec"
+    ),
+    /must reference every non-default preview state with SHOW: missing-state/
+  );
+  assert.throws(
+    () => validation.validateScreenSpecStateReferences(
+      specWithShow.replace("SHOW** dialog-open", "SHOW** unknown-state"),
+      [{ id: "default" }, { id: "dialog-open" }],
+      "screens/home.yml spec"
+    ),
+    /references unknown preview state "unknown-state"/
   );
 
   const root = await createProject();

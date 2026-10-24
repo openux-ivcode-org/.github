@@ -35,7 +35,15 @@
       if (typeof state.name !== "string" || !state.name.trim()) {
         throw new Error(`${source} preview state "${state.id}" must have a non-empty name.`);
       }
-      if (Object.keys(state).some((key) => key !== "id" && key !== "name")) {
+      if (state.id !== "default" &&
+          (typeof state.description !== "string" || !state.description.trim())) {
+        throw new Error(`${source} preview state "${state.id}" must have a non-empty description.`);
+      }
+      if (state.description !== undefined &&
+          (typeof state.description !== "string" || !state.description.trim())) {
+        throw new Error(`${source} preview state "${state.id}" description must be a non-empty string.`);
+      }
+      if (Object.keys(state).some((key) => key !== "id" && key !== "name" && key !== "description")) {
         throw new Error(`${source} preview state "${state.id}" has an unsupported property.`);
       }
       ids.add(state.id);
@@ -110,15 +118,62 @@
           ? scenarioIndexes[scenarioIndex + 1]
           : requirementEnd;
         const steps = lines.slice(lineIndex + 1, scenarioEnd)
-          .map((line) => line.match(/^\s*-\s+\*\*(GIVEN|WHEN|THEN|AND)\*\*\s+\S/)?.[1])
+          .map((line) => line.match(/^\s*-\s+\*\*(GIVEN|WHEN|THEN|AND|SHOW)\*\*\s+\S/)?.[1])
           .filter(Boolean);
         if (!steps.includes("WHEN") || !steps.includes("THEN")) {
           throw new Error('Each scenario must include "- **WHEN** ..." and "- **THEN** ..." steps.');
+        }
+        if (steps.includes("SHOW") && steps.indexOf("SHOW") < steps.indexOf("THEN")) {
+          throw new Error('A scenario "- **SHOW** <state-id>" step must follow its "- **THEN** ..." step.');
         }
       }
     }
 
     return true;
+  }
+
+  function validateScreenSpecStateReferences(source, states, context) {
+    const documents = Array.isArray(source) ? source : [{ content: source }];
+    const shownStateIds = new Set();
+    for (const document of documents) {
+      const documentContext = document.path ? `${context} (${document.path})` : context;
+      const lines = document.content.replace(/\r\n?/g, "\n").split("\n");
+      let inScenario = false;
+      let thenSeen = false;
+      for (const line of lines) {
+        if (/^#### Scenario:\s+\S/.test(line)) {
+          inScenario = true;
+          thenSeen = false;
+          continue;
+        }
+        if (/^(?:##\s|###\s)/.test(line)) inScenario = false;
+        if (/^\s*-\s+\*\*THEN\*\*\s+\S/.test(line)) thenSeen = true;
+        if (!line.includes("**SHOW**")) continue;
+        const match = line.match(/^\s*-\s+\*\*SHOW\*\*\s+([a-z][a-z0-9-]*)\s*$/);
+        if (!match) {
+          throw new Error(`${documentContext}: SHOW steps must use the form "- **SHOW** <state-id>".`);
+        }
+        if (!inScenario || !thenSeen) {
+          throw new Error(`${documentContext}: SHOW steps must appear in a scenario after its THEN step.`);
+        }
+        shownStateIds.add(match[1]);
+      }
+    }
+
+    const stateIds = new Set(states.map((state) => state.id));
+    for (const stateId of shownStateIds) {
+      if (!stateIds.has(stateId)) {
+        throw new Error(`${context}: linked spec references unknown preview state "${stateId}".`);
+      }
+    }
+    const missingStateIds = states
+      .filter((state) => state.id !== "default" && !shownStateIds.has(state.id))
+      .map((state) => state.id);
+    if (missingStateIds.length) {
+      throw new Error(
+        `${context}: specs linked to the Screen must reference every non-default preview state with SHOW: ${missingStateIds.join(", ")}.`
+      );
+    }
   }
 
   function isValidAttributeValue(definition, value) {
@@ -266,6 +321,7 @@
     validatePreviewStates,
     validateSpecContent,
     validateSpecPath,
+    validateScreenSpecStateReferences,
     validateTheme
   };
 });

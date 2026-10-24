@@ -6,6 +6,8 @@ preview-states:
     name: Dashboard
   - id: add-item-open
     name: Add item dialog open
+    description: Show the Add item dialog over the dashboard.
+spec: specs/home-behavior.md
 assets:
   - asset-template: dashboard-layout
     name: Account dashboard

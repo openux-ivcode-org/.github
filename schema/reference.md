@@ -5,7 +5,7 @@ This reference is versioned with the OpenUX CLI. Start by reading the target pro
 ## Project discovery
 
 - Work in the existing project the user identified. The project root is the directory containing `project.yml`, which may be in an `openux/` subdirectory.
-- Read `project.yml` to find Screen IDs and files, asset IDs and directories, the Theme, and any project-wide spec. Read each Screen and follow its asset-instance `spec` links.
+- Read `project.yml` to find Screen IDs and files, asset IDs and directories, the Theme, and any project-wide spec. Read each Screen and follow its Screen-level and asset-instance `spec` links.
 - Do not initialize a second project or change the project's OpenUX version as a shortcut.
 - Use existing Screens, templates, attributes, slots, notes, and specs as source context. Do not invent IDs, slots, attribute values, or requirements.
 
@@ -16,7 +16,7 @@ This reference is versioned with the OpenUX CLI. Start by reading the target pro
 3. Keep Screen YAML structural. Reuse suitable templates; create a new template only when existing assets cannot express the requested visual element or layout.
 4. Before creating a template, decide whether it belongs to one Screen or is intentionally reusable. Templates for one Screen's unique content or layout are page-specific by default: set `screen: <screen-id>` on their `project.yml` entry so they appear under that Screen's asset list. Omit `screen` only for templates deliberately shared across Screens. A page-specific template may only be used by its owner; copying one to another Screen creates an independent page-local copy. Use globally unique asset IDs and optional slash-delimited `category` paths for organization.
 5. For every asset instance, use only template-declared attributes marked `overridable: true`, with values matching their declared types and options. Declare all slots and referenced local resources in the asset template.
-6. Keep visual variations such as a dialog-open or empty state on the same Screen. Define named `preview-states` in the Screen file and set an instance's `visibility` mapping for states where it should be hidden; unspecified states are visible. These are Studio preview configurations, not executable application behavior or substitutes for behavior specs.
+6. Keep visual variations such as a dialog-open or empty state on the same Screen. Define named `preview-states` in the Screen file; every non-default state needs a concise description. Include `- **SHOW** <state-id>` in a scenario after `THEN` for every non-default state in a spec linked to the Screen or one of its asset instances. Set an instance's `visibility` mapping for states where it should be hidden; unspecified states are visible. These are Studio preview configurations, not executable application behavior.
 
 ## Behavior specs
 
@@ -25,9 +25,10 @@ This reference is versioned with the OpenUX CLI. Start by reading the target pro
 - Each actionable UI element must be covered by a spec linked with `spec` on the asset instance that renders it. If one instance renders multiple actionable elements, its instance spec must describe each element separately with relevant requirements and scenarios.
 - Purely visual instances do not need behavior specs.
 - If an actionable element's behavior is not clear from the user's request, Screen, notes, or existing specs, ask the user rather than inventing behavior or leaving the element without a spec.
-- A project-level spec is only for requirements shared across multiple Screens or applying throughout the project. It does not replace specs for individual actionable elements and must not be used as a Screen-wide spec.
-- Specs belong only on asset instances in Screen YAML. Never put `spec` on a Screen's top-level mapping or in an asset template's `asset.yml`. Each instance supports at most one spec.
-- Write each spec in OpenSpec format with `## Purpose`, `## Requirements`, named `### Requirement:` headings, immediate normative statements, and named `#### Scenario:` sections. Scenario steps use bold `GIVEN` (optional), `WHEN`, `THEN`, and `AND` bullet keywords. Keep requirements observable and testable; do not include implementation plans or repeat visual details already shown by the mockup.
+- A project-level spec is only for requirements shared across multiple Screens or applying throughout the project. It does not replace specs for individual actionable elements.
+- Screen-level specs describe page behavior and preview-state activation conditions. A Screen with non-default preview states must reference every such state with `SHOW <state-id>` in its Screen-level spec or an asset-instance spec on that Screen.
+- Specs for individual actionable elements belong on the corresponding asset instances. Never put `spec` in an asset template's `asset.yml`. Each Screen and instance supports at most one spec.
+- Write each spec in OpenSpec format with `## Purpose`, `## Requirements`, named `### Requirement:` headings, immediate normative statements, and named `#### Scenario:` sections. Scenario steps use bold `GIVEN` (optional), `WHEN`, `THEN`, and `AND` bullet keywords. In specs linked to a Screen or its instances, use `SHOW <state-id>` after `THEN` and ensure every non-default preview state is referenced by at least one linked spec. Keep requirements observable and testable; do not include implementation plans or repeat visual details already shown by the mockup.
 - Replace example draft content with behavior derived from the user's intent and project context. Do not save an unchanged example draft.
 
 Before finishing, inspect the complete Screen and its asset templates. Audit every actionable control against its owning instance's spec and verify the spec describes its actual behavior rather than generic Screen-wide behavior.
@@ -54,7 +55,7 @@ Before reporting a Screen or project task complete, explicitly review every item
 
 - [ ] Does every asset instance that renders an actionable UI element have a linked behavior spec?
 - [ ] If an instance renders multiple actionable elements, does its spec describe each one with concrete requirements and scenarios?
-- [ ] Are specs attached to Screen asset instances—not to Screen mappings or asset templates—and is the project-level spec reserved for project-wide behavior?
+- [ ] Are page-level specs attached to Screens, actionable-element specs attached to the corresponding instances, and project-level specs reserved for project-wide behavior?
 - [ ] Are all templates unique to one Screen registered with that Screen's `screen` ID, and are only intentionally reusable templates in the shared library?
 - [ ] Does each Screen have zero or one root layout, and does a populated root declare the slots used by its children?
 - [ ] Are alternate visual states represented as Screen preview states with instance visibility, rather than duplicate Screens?
