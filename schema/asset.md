@@ -4,6 +4,12 @@ An asset definition is the complete directory named by an asset's `directory` pr
 
 Each YAML mapping in `asset.yml` accepts only the properties listed in this schema. An unlisted property is invalid. Attribute names are user-defined keys; each attribute definition must use only its listed properties.
 
+## Asset Scope
+
+An asset template SHOULD represent one cohesive UI component with a clear responsibility, such as a navigation area, search control, room list, or dialog. Do not use one asset to contain an entire Screen when that Screen has multiple independently meaningful regions. Compose those regions as child assets in the Screen's root layout slots.
+
+A component may contain multiple elements and controls when they work together as one unit; do not create separate assets for incidental markup, labels, or decorative details. Make distinct assets for regions with their own purpose, content, interaction, or reuse. This keeps Screen structure visible in its asset instances and makes each component easier to understand and maintain.
+
 ## Asset Files
 
 | File | Required | Definition |
