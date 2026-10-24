@@ -16,7 +16,8 @@ Run the commands as `openux ...` when the package's `bin` entry is available, or
 | `openux server update [--port <port>]` | Notify connected browser tabs after project files have changed. Tabs without unsaved edits refresh; tabs with unsaved edits are left untouched and prompted to save or reset before refreshing. |
 | `openux init [--project <directory>]` | Create a starter project under `<directory>/openux` (defaults to the current directory). Refuses to overwrite any generated file that already exists. |
 | `openux validate [--project <directory>]` | Validate project resources, asset bundles, local file references, and references between resources. |
-| `openux schema [project\|screen\|asset\|theme\|spec]` | Print Markdown authoring guidance. Without a type, print all supported guidance. |
+| `openux version` | Print the OpenUX format version supported by this CLI. `openux --version` is an alias. |
+| `openux schema [project\|screen\|asset\|theme\|spec\|reference]` | Print Markdown authoring guidance. Use `reference` for the version-matched authoring workflow; without a type, print all guidance. |
 | `openux render <screen> --format <html\|image> [--output <file>] [--project <directory>]` | Render a Screen by ID as HTML or a full-page image. |
 | `openux prune [--apply] [--project <directory>]` | Report unused assets. No files are removed unless `--apply` is supplied. |
 
@@ -53,7 +54,7 @@ Pruning is non-destructive by default: `openux prune` reports candidates without
 
 1. Start the editor with `openux server start` and check it with `openux server status`.
 2. Use `openux server selected` to get context about the item selected in the browser editor.
-3. Read the relevant authoring guidance with `openux schema [type]`.
+3. Read the version-matched authoring workflow with `openux schema reference`, then consult `openux schema [type]` for an artifact's format details.
 4. Edit project files directly.
 5. Run `openux validate` to catch malformed files and project-level issues.
 6. Run `openux render <screen> --format image --output <file>` to inspect the rendered result.

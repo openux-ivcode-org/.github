@@ -14,7 +14,8 @@ const schemaFiles = new Map([
   ["screen", "screen.md"],
   ["asset", "asset.md"],
   ["theme", "theme.md"],
-  ["spec", "spec.md"]
+  ["spec", "spec.md"],
+  ["reference", "reference.md"]
 ]);
 
 function usage() {
@@ -28,7 +29,8 @@ function usage() {
     "  openux server update [--port <port>]",
     "  openux init [--project <directory>]",
     "  openux validate [--project <directory>]",
-    "  openux schema [project|screen|asset|theme|spec]",
+    "  openux version",
+    "  openux schema [project|screen|asset|theme|spec|reference]",
     "  openux render <screen> --format <html|image> [--output <file>] [--project <directory>]",
     "  openux prune [--apply] [--project <directory>]"
   ].join("\n");
@@ -192,16 +194,21 @@ async function runServerCommand(command, args) {
 }
 
 async function runSchemaCommand(args) {
-  if (args.length > 1) throw new Error("Usage: openux schema [project|screen|asset|theme|spec]");
+  if (args.length > 1) throw new Error("Usage: openux schema [project|screen|asset|theme|spec|reference]");
   const type = args[0];
   const docs = type ? [schemaFiles.get(type)] : [...schemaFiles.values()];
   if (type && !docs[0]) {
-    throw new Error(`Unknown schema type "${type}". Use project, screen, asset, theme, or spec.`);
+    throw new Error(`Unknown schema type "${type}". Use project, screen, asset, theme, spec, or reference.`);
   }
   const content = await Promise.all(docs.map((file) =>
     fs.readFile(path.join(studioRoot, "schema", file), "utf8")
   ));
   process.stdout.write(content.join("\n\n---\n\n"));
+}
+
+function runVersionCommand(args) {
+  if (args.length) throw new Error("Usage: openux version");
+  console.log(OPENUX_VERSION);
 }
 
 async function runValidateCommand(args) {
@@ -706,6 +713,8 @@ async function main(args = process.argv.slice(2)) {
     return runServerCommand(subcommand, subArgs);
   }
   if (command === "init") return runInitCommand(rest);
+  if (command === "version") return runVersionCommand(rest);
+  if (command === "--version" || command === "-v") return runVersionCommand(rest);
   if (command === "schema") return runSchemaCommand(rest);
   if (command === "validate") return runValidateCommand(rest);
   if (command === "render") return runRenderCommand(rest);

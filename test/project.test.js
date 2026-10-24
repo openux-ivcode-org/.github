@@ -355,6 +355,17 @@ test("init creates a valid starter project", async () => {
   }
 });
 
+test("version and schema reference commands expose the installed format guidance", () => {
+  const version = spawnSync(process.execPath, [cliPath, "version"], { encoding: "utf8" });
+  assert.equal(version.status, 0, version.stderr);
+  assert.equal(version.stdout.trim(), OPENUX_VERSION);
+
+  const reference = spawnSync(process.execPath, [cliPath, "schema", "reference"], { encoding: "utf8" });
+  assert.equal(reference.status, 0, reference.stderr);
+  assert.match(reference.stdout, /every actionable UI element must have a behavior spec/i);
+  assert.match(reference.stdout, /set `screen: <screen-id>`/);
+});
+
 test("project validation requires the supported OpenUX version", async () => {
   const root = await createProject();
   try {

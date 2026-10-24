@@ -9,7 +9,7 @@ The `schema/` directory contains the OpenUX artifact schemas and authoring guida
 Install the CLI package from the current development branch, then install the OpenUX authoring skill from that same branch:
 
 ```sh
-npm install git+https://github.com/openux-ivcode-org/.github.git#feature/editor-asset-add-flow
+npm install --save-dev git+https://github.com/openux-ivcode-org/.github.git#feature/editor-asset-add-flow
 npx skills add https://raw.githubusercontent.com/openux-ivcode-org/.github/feature/editor-asset-add-flow/skills/openux/SKILL.md
 ```
 
