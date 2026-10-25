@@ -1,2 +1,2 @@
 # .github
-The OpenUX Standard
+The SpecUX Framework
