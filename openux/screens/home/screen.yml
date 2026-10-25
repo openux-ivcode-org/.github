@@ -18,12 +18,12 @@ elements:
         - id: dashboard-header
           name: Dashboard header
           type: template
-          src: screens/home/assets/dashboard-header.html
+          src: screens/home/assets/dashboard-header.stml
       navigation:
         - id: main-navigation
           name: Main navigation
           type: template
-          src: screens/home/assets/dashboard-navigation.html
+          src: screens/home/assets/dashboard-navigation.stml
       content:
         - id: account-overview
           name: Account overview
@@ -32,7 +32,7 @@ elements:
               - id: welcome-panel
                 name: Welcome panel
                 type: template
-                src: screens/home/assets/dashboard-welcome.html
+                src: screens/home/assets/dashboard-welcome.stml
             metrics:
               - id: available-balance
                 name: Available balance
@@ -42,7 +42,7 @@ elements:
                   change: +$1,240 this month
                   trend: positive
                 type: template
-                src: screens/home/assets/dashboard-metric.html
+                src: screens/home/assets/dashboard-metric.stml
               - id: monthly-income
                 name: Monthly income
                 attributes:
@@ -51,7 +51,7 @@ elements:
                   change: +6.4% from last month
                   trend: positive
                 type: template
-                src: screens/home/assets/dashboard-metric.html
+                src: screens/home/assets/dashboard-metric.stml
               - id: monthly-spending
                 name: Monthly spending
                 attributes:
@@ -60,7 +60,7 @@ elements:
                   change: 12.8% of your budget
                   trend: neutral
                 type: template
-                src: screens/home/assets/dashboard-metric.html
+                src: screens/home/assets/dashboard-metric.stml
               - id: savings-goal
                 name: Savings goal
                 attributes:
@@ -69,25 +69,25 @@ elements:
                   change: 62% of your $10,000 goal
                   trend: positive
                 type: template
-                src: screens/home/assets/dashboard-metric.html
+                src: screens/home/assets/dashboard-metric.stml
             activity:
               - id: recent-activity
                 name: Recent activity
                 type: template
-                src: screens/home/assets/dashboard-activity.html
+                src: screens/home/assets/dashboard-activity.stml
             insights:
               - id: account-insights
                 name: Account insights
                 type: template
-                src: screens/home/assets/dashboard-insights.html
+                src: screens/home/assets/dashboard-insights.stml
           type: template
-          src: screens/home/assets/dashboard-overview.html
+          src: screens/home/assets/dashboard-overview.stml
         - id: add-item-dialog
           name: Add item dialog
           visibility:
             default: false
             add-item-open: true
           type: template
-          src: screens/home/assets/dashboard-dialog.html
+          src: screens/home/assets/dashboard-dialog.stml
     type: template
-    src: screens/home/assets/dashboard-layout.html
+    src: screens/home/assets/dashboard-layout.stml

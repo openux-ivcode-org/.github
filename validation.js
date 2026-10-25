@@ -7,6 +7,7 @@
     root.OpenuxValidation = validation;
   }
 })(globalThis, () => {
+  const TEMPLATE_FILE_EXTENSION = ".stml";
   const attributeTypes = ["string", "boolean", "list", "number"];
   const numberFormats = ["integer", "decimal", "currency", "percentage"];
   const themeModeNames = ["light", "dark"];
@@ -407,6 +408,7 @@
   return {
     assetCategoryPath,
     attributeTypes,
+    TEMPLATE_FILE_EXTENSION,
     getPreviewStates,
     isMapping,
     isValidAttributeValue,

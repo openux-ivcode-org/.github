@@ -21,7 +21,7 @@ async function withServer(run) {
   await fs.writeFile(path.join(rootDirectory, "openux", "project.yml"), "name: Example\n");
   await fs.writeFile(path.join(rootDirectory, "openux", "screen.yml"), "name: Before\n");
   await fs.writeFile(
-    path.join(rootDirectory, "openux", "assets", "demo.html"),
+    path.join(rootDirectory, "openux", "assets", "demo.stml"),
     assetDocument({ id: "demo", name: "Demo", description: "Test asset." }, "<p>Before</p>")
   );
   await fs.writeFile(
@@ -46,6 +46,7 @@ test("serves the editor root and the example project", async () => {
     const editor = await fetch(baseUrl);
     const project = await fetch(`${baseUrl}/openux/project.yml`);
     const encodedResource = await fetch(`${baseUrl}/openux/assets/preview%20image.png`);
+    const template = await fetch(`${baseUrl}/openux/assets/demo.stml`);
     const traversal = await fetch(`${baseUrl}/openux/%2e%2e%2findex.html`);
     assert.equal(editor.status, 200);
     assert.match(await editor.text(), /Editor/);
@@ -54,6 +55,9 @@ test("serves the editor root and the example project", async () => {
     assert.equal(encodedResource.status, 200);
     assert.equal(encodedResource.headers.get("content-type"), "image/png");
     assert.deepEqual(Buffer.from(await encodedResource.arrayBuffer()), Buffer.from("image"));
+    assert.equal(template.status, 200);
+    assert.equal(template.headers.get("content-type"), "text/plain; charset=utf-8");
+    assert.match(await template.text(), /^---\n/);
     assert.equal(traversal.status, 404);
   });
 });
@@ -67,7 +71,7 @@ test("lists project files without exposing hidden paths", async () => {
     const response = await fetch(`${baseUrl}/api/files`);
     assert.equal(response.status, 200);
     assert.deepEqual((await response.json()).files, [
-      "assets/demo.html",
+      "assets/demo.stml",
       "assets/preview image.png",
       "project.yml",
       "screen.yml",
@@ -218,7 +222,7 @@ test("creates new Screen YAML files and updates the project manifest", async () 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         files: [{
-          path: "assets/demo.html",
+          path: "assets/demo.stml",
           create: true,
           content: assetDocument({ id: "demo", name: "Demo", description: "Test asset." }, "<p>Demo</p>")
         }]
@@ -228,22 +232,22 @@ test("creates new Screen YAML files and updates the project manifest", async () 
   });
 });
 
-test("saves HTML source only as a named Asset template file", async () => {
+test("saves STML source only as a named template file", async () => {
   await withServer(async ({ baseUrl, rootDirectory }) => {
     const response = await fetch(`${baseUrl}/api/save`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         files: [{
-          path: "assets/demo.html",
+          path: "assets/demo.stml",
           content: assetDocument({ id: "demo", name: "Demo", description: "Test asset." }, "<p>After</p>")
         }]
       })
     });
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { saved: ["assets/demo.html"] });
+    assert.deepEqual(await response.json(), { saved: ["assets/demo.stml"] });
     assert.equal(
-      await fs.readFile(path.join(rootDirectory, "openux", "assets", "demo.html"), "utf8"),
+      await fs.readFile(path.join(rootDirectory, "openux", "assets", "demo.stml"), "utf8"),
       assetDocument({ id: "demo", name: "Demo", description: "Test asset." }, "<p>After</p>")
     );
 
@@ -264,10 +268,19 @@ test("saves HTML source only as a named Asset template file", async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        files: [{ path: "assets/demo.html", content: "<p>Missing header</p>" }]
+        files: [{ path: "assets/demo.stml", content: "<p>Missing header</p>" }]
       })
     });
     assert.equal(invalidDocument.status, 400);
+
+    const staticHtml = await fetch(`${baseUrl}/api/save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        files: [{ path: "assets/demo.html", content: "<p>Static HTML</p>" }]
+      })
+    });
+    assert.equal(staticHtml.status, 400);
   });
 });
 
@@ -287,7 +300,7 @@ test("copies page-specific Asset template files and resources on save", async ()
     await fs.mkdir(sourceAssetDirectory, { recursive: true });
     await fs.writeFile(path.join(projectRoot, "screens", "source", "screen.yml"), "name: Source\nelements: []\n");
     await fs.writeFile(
-      path.join(sourceAssetDirectory, "demo.html"),
+      path.join(sourceAssetDirectory, "demo.stml"),
       assetDocument({ id: "demo", name: "Demo", description: "Test asset." }, '<p><img src="preview image.png"></p>')
     );
     await fs.writeFile(path.join(sourceAssetDirectory, "preview image.png"), Buffer.from("image"));
@@ -308,7 +321,7 @@ test("copies page-specific Asset template files and resources on save", async ()
         files: [
           { path: "project.yml", data: nextProject },
           {
-            path: "screens/destination/assets/destination-demo.html",
+            path: "screens/destination/assets/destination-demo.stml",
             content: assetDocument({
               id: "destination-demo",
               name: "Edited Demo",
@@ -320,16 +333,16 @@ test("copies page-specific Asset template files and resources on save", async ()
             create: true,
             data: {
               name: "Destination",
-              elements: [{ id: "destination-demo", type: "template", src: "screens/destination/assets/destination-demo.html" }]
+              elements: [{ id: "destination-demo", type: "template", src: "screens/destination/assets/destination-demo.stml" }]
             }
           }
         ],
         assetCopies: [{
           sourceId: "demo",
           sourceScreen: "source",
-          sourceFile: "screens/source/assets/demo.html",
+          sourceFile: "screens/source/assets/demo.stml",
           targetId: "destination-demo",
-          targetFile: "screens/destination/assets/destination-demo.html",
+          targetFile: "screens/destination/assets/destination-demo.stml",
           targetScreen: "destination"
         }]
       })
@@ -338,13 +351,13 @@ test("copies page-specific Asset template files and resources on save", async ()
     assert.deepEqual(await response.json(), {
       saved: [
         "project.yml",
-        "screens/destination/assets/destination-demo.html",
+        "screens/destination/assets/destination-demo.stml",
         "screens/destination/screen.yml"
       ],
       copied: ["destination-demo"]
     });
     const copiedAssetSource = await fs.readFile(
-      path.join(projectRoot, "screens", "destination", "assets", "destination-demo.html"),
+      path.join(projectRoot, "screens", "destination", "assets", "destination-demo.stml"),
       "utf8"
     );
     const copiedAsset = validation.splitAssetDocument(copiedAssetSource, "destination Asset");
@@ -367,7 +380,7 @@ test("copies page-specific Asset template files and resources on save", async ()
       "assets",
       "preview image.png"
     )));
-    const sourceAssetSource = await fs.readFile(path.join(sourceAssetDirectory, "demo.html"), "utf8");
+    const sourceAssetSource = await fs.readFile(path.join(sourceAssetDirectory, "demo.stml"), "utf8");
     assert.equal(YAML.parse(validation.splitAssetDocument(sourceAssetSource).header).id, "demo");
   });
 });

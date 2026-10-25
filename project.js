@@ -228,12 +228,12 @@ async function validateProject(projectRoot) {
         }
         if (!details.isFile()) throw new Error("asset paths must be regular files.");
         const extension = path.posix.extname(entry.name).toLowerCase();
-        const fileType = extension === ".html"
+        const fileType = extension === validation.TEMPLATE_FILE_EXTENSION
           ? "template"
           : imageExtensions.has(extension) ? "image" : "resource";
         if (fileType === "template" &&
             path.posix.dirname(relativePath) !== baseDirectory) {
-          throw new Error("template HTML files must be directly inside an assets directory.");
+          throw new Error("STML template files must be directly inside an assets directory.");
         }
         const asset = { file: relativePath, type: fileType, screen: ownerScreen };
         if (fileType === "template") {
@@ -245,8 +245,8 @@ async function validateProject(projectRoot) {
           }
           const data = document.toJS();
           validation.validateAssetTemplateHeader(data, relativePath);
-          if (data.id !== path.posix.basename(relativePath, ".html")) {
-            throw new Error(`front matter id must match filename "${path.posix.basename(relativePath, ".html")}".`);
+          if (data.id !== path.posix.basename(relativePath, validation.TEMPLATE_FILE_EXTENSION)) {
+            throw new Error(`front matter id must match filename "${path.posix.basename(relativePath, validation.TEMPLATE_FILE_EXTENSION)}".`);
           }
           if (templateIds.has(data.id)) {
             throw new Error(`template id "${data.id}" is already defined by "${templateIds.get(data.id)}".`);

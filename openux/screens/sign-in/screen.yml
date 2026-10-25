@@ -15,7 +15,7 @@ elements:
             mark: N
             brand-name: Northstar
           type: template
-          src: screens/sign-in/assets/sign-in-brand.html
+          src: screens/sign-in/assets/sign-in-brand.stml
         - id: brand-story
           name: Brand story
           attributes:
@@ -24,7 +24,7 @@ elements:
             description: Bring your accounts together, follow your progress, and feel more
               confident about what comes next.
           type: template
-          src: screens/sign-in/assets/sign-in-story.html
+          src: screens/sign-in/assets/sign-in-story.stml
         - id: account-balance-preview
           name: Account balance preview
           attributes:
@@ -32,13 +32,13 @@ elements:
             amount: $24,680.50
             change: ↗ 8.4% this month
           type: template
-          src: screens/sign-in/assets/sign-in-snapshot.html
+          src: screens/sign-in/assets/sign-in-snapshot.stml
         - id: privacy-note
           name: Privacy note
           attributes:
             message: Private by design · Protected with care
           type: template
-          src: screens/sign-in/assets/sign-in-trust.html
+          src: screens/sign-in/assets/sign-in-trust.stml
       content:
         - id: sign-in-heading
           name: Sign-in heading
@@ -47,7 +47,7 @@ elements:
             title: Welcome back
             description: Sign in to pick up right where you left off.
           type: template
-          src: screens/sign-in/assets/sign-in-heading.html
+          src: screens/sign-in/assets/sign-in-heading.stml
         - id: email-field-preview
           name: Email field preview
           description: Static visual representation of an email field.
@@ -57,7 +57,7 @@ elements:
             hint: EMAIL
             icon: "@"
           type: template
-          src: screens/sign-in/assets/sign-in-field-visual.html
+          src: screens/sign-in/assets/sign-in-field-visual.stml
         - id: password-field-preview
           name: Password field preview
           description: Static visual representation of a password field.
@@ -67,14 +67,14 @@ elements:
             hint: ◉
             icon: •
           type: template
-          src: screens/sign-in/assets/sign-in-field-visual.html
+          src: screens/sign-in/assets/sign-in-field-visual.stml
         - id: sign-in-options-preview
           name: Sign-in options preview
           attributes:
             remember-label: Remember this device
             recovery-label: Forgot password?
           type: template
-          src: screens/sign-in/assets/sign-in-options-visual.html
+          src: screens/sign-in/assets/sign-in-options-visual.stml
         - id: primary-sign-in-action-preview
           name: Primary sign-in action preview
           description: Static visual representation of the primary sign-in action.
@@ -82,13 +82,13 @@ elements:
             label: Continue to dashboard
             variant: primary
           type: template
-          src: screens/sign-in/assets/sign-in-action-visual.html
+          src: screens/sign-in/assets/sign-in-action-visual.stml
         - id: alternative-sign-in-divider
           name: Alternative sign-in divider
           attributes:
             label: OR CONTINUE WITH
           type: template
-          src: screens/sign-in/assets/sign-in-divider.html
+          src: screens/sign-in/assets/sign-in-divider.stml
         - id: google-sign-in-option-preview
           name: Google sign-in option preview
           description: Static visual representation of an alternative sign-in option.
@@ -97,12 +97,12 @@ elements:
             variant: secondary
             mark: G
           type: template
-          src: screens/sign-in/assets/sign-in-action-visual.html
+          src: screens/sign-in/assets/sign-in-action-visual.stml
         - id: preview-disclaimer
           name: Preview disclaimer
           attributes:
             text: Visual preview only — no credentials are collected or submitted.
           type: template
-          src: screens/sign-in/assets/sign-in-disclaimer.html
+          src: screens/sign-in/assets/sign-in-disclaimer.stml
     type: template
-    src: screens/sign-in/assets/sign-in-layout.html
+    src: screens/sign-in/assets/sign-in-layout.stml

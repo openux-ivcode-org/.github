@@ -50,7 +50,7 @@ Type-specific properties:
 |---|---|---|---|
 | `text` | `content` | `tag` | `content` is literal text. `tag` is one of `p`, `span`, `h1`–`h6`, `label`, `strong`, or `small`; it defaults to `p`. |
 | `image` | `src`, `alt` | — | `src` is a project-relative path to a discovered image asset. `alt` is a string; use an empty string for a decorative image. |
-| `template` | `src` | `attributes`, `slots` | `src` is a project-relative path to a discovered `.html` template asset. `attributes` contains overrides marked `overridable: true` by that template. `slots` contains child Element lists keyed by the template's declared slot IDs. |
+| `template` | `src` | `attributes`, `slots` | `src` is a project-relative path to a discovered `.stml` template asset. `attributes` contains overrides marked `overridable: true` by that template. `slots` contains child Element lists keyed by the template's declared slot IDs. |
 
 Text and image Elements cannot define template attributes or slots. Template attributes and slot IDs are validated against the referenced template. Any template or image under `screens/<screen-id>/assets/` is limited to that Screen; files under project-level `assets/` are shared.
 
@@ -76,19 +76,19 @@ elements:
     alt: Northstar
   - id: sign-in-form
     type: template
-    src: assets/sign-in-form.html
+    src: assets/sign-in-form.stml
     slots:
       content:
         - id: email-field
           type: template
-          src: assets/text-field.html
+          src: assets/text-field.stml
           attributes:
             label: Email
             input-type: email
             required: true
         - id: continue-button
           type: template
-          src: assets/button.html
+          src: assets/button.stml
           attributes:
             label: Continue
 ```
@@ -105,7 +105,7 @@ preview-states:
 elements:
   - id: add-item-dialog
     type: template
-    src: assets/add-item-dialog.html
+    src: assets/add-item-dialog.stml
     visibility:
       default: false
       add-item-open: true

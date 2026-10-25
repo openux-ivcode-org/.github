@@ -6,7 +6,7 @@ const booleanHtmlAttributes = new Set([
   "reversed", "selected"
 ]);
 const sharedValidation = window.OpenuxValidation;
-const { attributeTypes, numberFormats, themeModeNames } = sharedValidation;
+const { TEMPLATE_FILE_EXTENSION, attributeTypes, numberFormats, themeModeNames } = sharedValidation;
 const systemThemeQuery = window.matchMedia?.("(prefers-color-scheme: dark)");
 const renderParameters = new URLSearchParams(window.location.search);
 const renderRequestedScreen = renderParameters.get("render");
@@ -95,7 +95,7 @@ function isInstanceVisible(instance, stateId = getActivePreviewStateId()) {
 }
 
 function getTemplateByPath(filePath) {
-  return [...assets.values()].find((template) => template.htmlFile === filePath) || null;
+  return [...assets.values()].find((template) => template.templateFile === filePath) || null;
 }
 
 function getElementLabel(instance) {
@@ -580,7 +580,7 @@ async function loadProject(selectionToRestore = null) {
       .filter((filePath) => /^(?:assets|screens\/[a-z][a-z0-9-]*\/assets)\//.test(filePath))
       .map((filePath) => {
         const extension = filePath.slice(filePath.lastIndexOf(".")).toLowerCase();
-        const type = extension === ".html"
+        const type = extension === TEMPLATE_FILE_EXTENSION
           ? "template"
           : [".avif", ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".png", ".svg", ".webp"].includes(extension)
             ? "image"
@@ -604,26 +604,30 @@ async function loadProject(selectionToRestore = null) {
       })),
       Promise.all([...assetFiles]
         .filter(([, type]) => type === "template")
-        .map(async ([htmlFile]) => {
-        const directory = htmlFile.slice(0, htmlFile.lastIndexOf("/"));
+        .map(async ([templateFile]) => {
+        const directory = templateFile.slice(0, templateFile.lastIndexOf("/"));
         const base = safeProjectUrl(`${directory}/`);
-        const documentSource = await loadText(htmlFile);
-        const { header, body } = sharedValidation.splitAssetDocument(documentSource, htmlFile);
-        const data = await parseYamlSource(header, `${htmlFile} front matter`);
-        sharedValidation.validateAssetTemplateHeader(data, htmlFile);
-        if (data.id !== htmlFile.slice(htmlFile.lastIndexOf("/") + 1, -5)) {
-          throw new Error(`Asset id must match the filename in ${htmlFile}.`);
+        const documentSource = await loadText(templateFile);
+        const { header, body } = sharedValidation.splitAssetDocument(documentSource, templateFile);
+        const data = await parseYamlSource(header, `${templateFile} front matter`);
+        sharedValidation.validateAssetTemplateHeader(data, templateFile);
+        const fileId = templateFile.slice(
+          templateFile.lastIndexOf("/") + 1,
+          -TEMPLATE_FILE_EXTENSION.length
+        );
+        if (data.id !== fileId) {
+          throw new Error(`Asset id must match the filename in ${templateFile}.`);
         }
-        assetCategoryPath(data, `${htmlFile} front matter`);
-        validateAssetAttributes(data, `${htmlFile} front matter`);
-        validateAssetSlots(data, `${htmlFile} front matter`);
-        validateAssetSlotMarkup(data, body, htmlFile);
+        assetCategoryPath(data, `${templateFile} front matter`);
+        validateAssetAttributes(data, `${templateFile} front matter`);
+        validateAssetSlots(data, `${templateFile} front matter`);
+        validateAssetSlotMarkup(data, body, templateFile);
         return {
           id: data.id,
-          screen: htmlFile.match(/^screens\/([^/]+)\/assets\//)?.[1] || null,
+          screen: templateFile.match(/^screens\/([^/]+)\/assets\//)?.[1] || null,
           base,
           data,
-          htmlFile,
+          templateFile,
           documentSource,
           yamlSource: header,
           yamlSourceMode: "source",
@@ -821,7 +825,7 @@ function currentUiSelection() {
       asset: template ? {
         id: template.id,
         name: template.data.name || template.id,
-        file: activeProjectFilePath || template.htmlFile
+        file: activeProjectFilePath || template.templateFile
       } : null
     };
   }
@@ -852,7 +856,7 @@ function getSelectionFilePath(selection) {
   if (selection.view === "theme") return selection.file || project?.theme || null;
   if (selection.view === "spec") return selection.spec?.file || null;
   if (selection.view === "asset-template") {
-    return selection.asset?.file || selection.asset?.htmlFile || null;
+    return selection.asset?.file || selection.asset?.templateFile || null;
   }
   return selection.screen?.file || screens[activeScreenIndex]?.file || null;
 }
@@ -1110,7 +1114,7 @@ function renderNavigation() {
       : viewingProject
         ? "project.yml"
         : viewingAssetTemplate
-          ? assets.get(activeAssetId)?.htmlFile
+          ? assets.get(activeAssetId)?.templateFile
           : screens[activeScreenIndex]?.file);
   if (activeFilePath) expandFilePath(activeFilePath);
   const tree = buildProjectFileTree(getProjectTreeFilePaths());
@@ -1183,7 +1187,7 @@ function getProjectTreeFilePaths() {
   }
   for (const screen of screens) filePaths.add(screen.file);
   for (const asset of assets.values()) {
-    filePaths.add(asset.htmlFile);
+    filePaths.add(asset.templateFile);
   }
   for (const filePath of specSources.keys()) filePaths.add(filePath);
   for (const filePath of createdSpecDrafts.keys()) filePaths.add(filePath);
@@ -1191,7 +1195,7 @@ function getProjectTreeFilePaths() {
   for (const filePath of createdSpecFiles) filePaths.add(filePath);
   for (const copy of pendingAssetCopies) {
     const template = assets.get(copy.targetId);
-    if (template) filePaths.add(template.htmlFile);
+    if (template) filePaths.add(template.templateFile);
   }
   return [...filePaths].filter((filePath) =>
     typeof filePath === "string" && filePath && !filePath.startsWith("/") && !filePath.includes("\\")
@@ -1283,7 +1287,7 @@ function renderProjectFile(file) {
   }
   if (action?.kind === "asset") {
     button.dataset.assetId = action.asset.id;
-    if (file.path === action.asset.htmlFile) configureAssetTemplateDrag(button, action.asset);
+    if (file.path === action.asset.templateFile) configureAssetTemplateDrag(button, action.asset);
     else updateAssetTemplateTreeFile(button, action.asset);
   } else if (action?.kind === "image") {
     configureAssetFileDrag(button, file.path);
@@ -1305,7 +1309,7 @@ function getProjectFileAction(filePath) {
     : null;
   if (filePath === project?.theme || filePath === themeStylesPath) return { kind: "theme" };
   for (const asset of assets.values()) {
-    if (filePath === asset.htmlFile) {
+    if (filePath === asset.templateFile) {
       return { kind: "asset", asset };
     }
   }
@@ -1369,7 +1373,7 @@ async function openProjectFile(filePath) {
 function configureAssetTemplateDrag(button, asset) {
   updateAssetTemplateTreeFile(button, asset);
   button.addEventListener("dragstart", (event) => {
-    event.dataTransfer.setData(assetDragType, asset.htmlFile);
+    event.dataTransfer.setData(assetDragType, asset.templateFile);
     event.dataTransfer.setData("text/plain", asset.data.name || asset.id);
     event.dataTransfer.effectAllowed = "copy";
     assetEditorRestoreId = viewingAssetTemplate ? activeAssetId : null;
@@ -1407,7 +1411,7 @@ function configureAssetFileDrag(button, filePath) {
 function updateAssetTemplateTreeFile(button, asset) {
   const assetName = asset.data.name || asset.id;
   const targetScreen = screens[activeScreenIndex];
-  const canDrag = button.dataset.projectFile === asset.htmlFile &&
+  const canDrag = button.dataset.projectFile === asset.templateFile &&
     Boolean(targetScreen) && (!asset.screen || asset.screen === targetScreen.id);
   button.draggable = canDrag;
   button.setAttribute(
@@ -1485,7 +1489,7 @@ function createAssetInstanceId(screen, name, fallback) {
 
 function createTemplateElement(template, siblings, screen) {
   const templateName = template.data.name || template.id;
-  const sameTemplateCount = siblings.filter((instance) => instance.src === template.htmlFile).length;
+  const sameTemplateCount = siblings.filter((instance) => instance.src === template.templateFile).length;
   const name = sameTemplateCount === 0 ? templateName : `${templateName} ${sameTemplateCount + 1}`;
   const attributes = Object.fromEntries(
     Object.entries(template.data.attributes || {})
@@ -1497,7 +1501,7 @@ function createTemplateElement(template, siblings, screen) {
   const instance = {
     id: createAssetInstanceId(screen, name, template.id),
     type: "template",
-    src: template.htmlFile,
+    src: template.templateFile,
     name,
     description: template.data.description || "",
     attributes
@@ -1509,7 +1513,7 @@ function createTemplateElement(template, siblings, screen) {
 async function ensureAssetOnScreen(template, screen) {
   if (!template.screen || template.screen === screen.id) return template;
   const existingCopy = [...assets.values()].find((asset) =>
-    asset.screen === screen.id && asset.copiedFrom === template.htmlFile
+    asset.screen === screen.id && asset.copiedFrom === template.templateFile
   );
   if (existingCopy) return existingCopy;
 
@@ -1518,8 +1522,8 @@ async function ensureAssetOnScreen(template, screen) {
   let file;
   for (let suffix = 1; ; suffix += 1) {
     id = suffix === 1 ? baseId : `${baseId}-${suffix}`;
-    file = `screens/${screen.id}/assets/${id}.html`;
-    if ([...assets.values()].some((entry) => entry.id === id || entry.htmlFile === file)) continue;
+    file = `screens/${screen.id}/assets/${id}${TEMPLATE_FILE_EXTENSION}`;
+    if ([...assets.values()].some((entry) => entry.id === id || entry.templateFile === file)) continue;
     const response = await fetch(safeProjectUrl(file));
     if (response.status === 404) break;
     if (!response.ok) {
@@ -1544,10 +1548,10 @@ async function ensureAssetOnScreen(template, screen) {
     ...template,
     id,
     screen: screen.id,
-    copiedFrom: template.htmlFile,
+    copiedFrom: template.templateFile,
     base: safeProjectUrl(`${file.slice(0, file.lastIndexOf("/"))}/`),
     data,
-    htmlFile: file,
+    templateFile: file,
     documentSource,
     yamlSource: yamlResult.source,
     yamlSourceMode: "source",
@@ -1558,14 +1562,14 @@ async function ensureAssetOnScreen(template, screen) {
   assetFiles.set(file, "template");
   pendingAssetCopies.push({
     sourceId: template.id,
-    sourceFile: template.htmlFile,
+    sourceFile: template.templateFile,
     sourceScreen: template.screen,
     targetId: id,
     targetFile: file,
     targetScreen: screen.id
   });
-  expandFilePath(copy.htmlFile);
-  markEdited(copy.htmlFile);
+  expandFilePath(copy.templateFile);
+  markEdited(copy.templateFile);
   renderNavigation();
   return copy;
 }
@@ -2309,7 +2313,7 @@ async function renderAssetTemplate(assetId, filePath = null) {
   const template = assets.get(assetId);
   if (!template) return;
   discardUneditedActiveSpecDraft();
-  activeProjectFilePath = filePath || template.htmlFile;
+  activeProjectFilePath = filePath || template.templateFile;
   hidePreviewStateControls();
   closeAssetContextMenu();
   updateScreenDomContext(null);
@@ -2335,13 +2339,13 @@ async function renderAssetTemplate(assetId, filePath = null) {
   byId("main").classList.add("asset-editing");
   byId("asset-document-editor-panel").hidden = false;
   byId("asset-document-editor-heading").textContent =
-    `${template.data.name || assetId} — ${template.htmlFile.split("/").pop()}`;
+    `${template.data.name || assetId} — ${template.templateFile.split("/").pop()}`;
   const editor = byId("asset-document-source");
   editor.value = template.documentSource;
   editor.setAttribute("aria-label", `${template.data.name || assetId} Asset document source`);
   editor.oninput = () => {
     const source = editor.value;
-    const filePath = template.htmlFile;
+    const filePath = template.templateFile;
     template.documentSource = source;
     template.yamlSourceMode = "source";
     template.yamlSerializeVersion += 1;
@@ -2364,7 +2368,7 @@ async function renderAssetTemplate(assetId, filePath = null) {
       });
     }, 250);
   };
-  const documentError = invalidYamlFiles.get(template.htmlFile);
+  const documentError = invalidYamlFiles.get(template.templateFile);
   if (documentError) {
     setAssetDocumentStatus(template, `Invalid Asset document: ${documentError}`, true);
   } else {
@@ -2375,7 +2379,7 @@ async function renderAssetTemplate(assetId, filePath = null) {
 }
 
 async function parseAssetDocument(template, source, version) {
-  const filePath = template.htmlFile;
+  const filePath = template.templateFile;
   const { header, body } = sharedValidation.splitAssetDocument(source, filePath);
   const data = await parseYamlSource(header, `${filePath} front matter`);
   if (version !== template.yamlParseVersion) return;
@@ -2405,7 +2409,7 @@ async function parseAssetDocument(template, source, version) {
   if (viewingAssetTemplate && activeAssetId === template.id) {
     byId("screen-heading").textContent = `${template.data.name || template.id} template`;
     byId("asset-document-editor-heading").textContent =
-      `${template.data.name || template.id} — ${template.htmlFile.split("/").pop()}`;
+      `${template.data.name || template.id} — ${template.templateFile.split("/").pop()}`;
     byId("asset-document-source").setAttribute(
       "aria-label",
       `${template.data.name || template.id} Asset document source`
@@ -2433,7 +2437,7 @@ async function renderAssetTemplatePreview(template) {
   preview.append(content);
   const sample = createSampleInstance(template);
   try {
-    validateAssetSlotMarkup(template.data, template.html, template.htmlFile);
+    validateAssetSlotMarkup(template.data, template.html, template.templateFile);
     const host = await renderInstance(sample, template, []);
     if (previewVersion !== assetPreviewVersion || !viewingAssetTemplate || activeAssetId !== template.id) return;
     content.append(host);
@@ -3407,7 +3411,7 @@ function renderInstanceDetails(panel, instance, template) {
   }, { multiline: true });
   if (instance.type === "template" && template) {
     panel.append(element("span", "template-tag", `${template.data.name || template.id} template`));
-    appendDetail(panel, "Asset file", template.htmlFile);
+    appendDetail(panel, "Asset file", template.templateFile);
   } else if (instance.type === "image") {
     appendDetail(panel, "Asset file", instance.src);
     appendEditableField(panel, "Alt text", instance.alt || "", (value) => {
@@ -3687,7 +3691,7 @@ function clearEdited(filePath) {
 }
 
 function markAssetTemplateEdited(template) {
-  const filePath = template.htmlFile;
+  const filePath = template.templateFile;
   template.yamlParseVersion += 1;
   clearTimeout(template.yamlTimer);
   invalidYamlFiles.delete(filePath);
@@ -3751,14 +3755,14 @@ function getProjectFileData(filePath) {
   if (filePath === "project.yml") return project;
   const screen = screens.find((entry) => entry.file === filePath);
   if (screen) return screen.data;
-  const asset = [...assets.values()].find((entry) => entry.htmlFile === filePath);
+  const asset = [...assets.values()].find((entry) => entry.templateFile === filePath);
   if (asset) return asset.data;
   if (project.theme === filePath) return theme;
   throw new Error(`Edited project file "${filePath}" is not available to save.`);
 }
 
 function getProjectFileSaveEntry(filePath) {
-  const assetHtml = [...assets.values()].find((entry) => entry.htmlFile === filePath);
+  const assetHtml = [...assets.values()].find((entry) => entry.templateFile === filePath);
   if (assetHtml) return { path: filePath, content: assetHtml.documentSource };
   if (specSources.has(filePath)) {
     return {
@@ -3924,7 +3928,7 @@ async function saveProjectChanges() {
     for (const file of snapshot) updatedFilePaths.add(file.path);
     for (const copy of copySnapshot) {
       const template = assets.get(copy.targetId);
-      if (template) updatedFilePaths.add(template.htmlFile);
+      if (template) updatedFilePaths.add(template.templateFile);
     }
     projectFilePaths = [...updatedFilePaths];
     for (let index = pendingAssetCopies.length - 1; index >= 0; index -= 1) {

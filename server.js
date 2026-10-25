@@ -27,7 +27,8 @@ const CONTENT_TYPES = new Map([
   [".woff2", "font/woff2"],
   [".yml", "text/yaml; charset=utf-8"],
   [".yaml", "text/yaml; charset=utf-8"],
-  [".md", "text/markdown; charset=utf-8"]
+  [".md", "text/markdown; charset=utf-8"],
+  [validation.TEMPLATE_FILE_EXTENSION, "text/plain; charset=utf-8"]
 ]);
 
 function requestError(message, statusCode = 400) {
@@ -109,8 +110,8 @@ function isAssetTemplateBaseDirectoryPath(relativePath) {
     /^screens\/[a-z][a-z0-9-]*\/assets$/.test(relativePath);
 }
 
-function isAssetTemplateHtmlPath(relativePath) {
-  return /^(?:assets|screens\/[a-z][a-z0-9-]*\/assets)\/[a-z][a-z0-9-]*\.html$/
+function isAssetTemplatePath(relativePath) {
+  return /^(?:assets|screens\/[a-z][a-z0-9-]*\/assets)\/[a-z][a-z0-9-]*\.stml$/
     .test(relativePath);
 }
 
@@ -160,11 +161,12 @@ async function resolveProjectFile(projectRoot, relativePath, { create = false, s
   }
   const extension = path.extname(relativePath).toLowerCase();
   const specPath = isSpecPath(relativePath);
-  if (![".yml", ".yaml", ".html"].includes(extension) && !(extension === ".md" && specPath)) {
-    throw requestError("The editor can only save project YAML, asset HTML, and behavior spec Markdown files.");
+  if (![".yml", ".yaml", validation.TEMPLATE_FILE_EXTENSION].includes(extension) && !(extension === ".md" && specPath)) {
+    throw requestError("The editor can only save project YAML, template STML, and behavior spec Markdown files.");
   }
-  if (extension === ".html" && !isAssetTemplateHtmlPath(relativePath)) {
-    throw requestError("HTML saves are only allowed as named files inside assets directories.");
+
+  if (extension === validation.TEMPLATE_FILE_EXTENSION && !isAssetTemplatePath(relativePath)) {
+    throw requestError("Template saves are only allowed as named STML files inside assets directories.");
   }
 
   const target = path.resolve(projectRoot, ...relativePath.split("/"));
@@ -340,8 +342,8 @@ async function prepareAssetCopies(projectRoot, assetCopies, updates) {
           !/^[a-z][a-z0-9-]*$/.test(request.sourceScreen || "") ||
           !/^[a-z][a-z0-9-]*$/.test(request.targetScreen || "") ||
           typeof request.sourceFile !== "string" ||
-          request.sourceFile !== `screens/${request.sourceScreen}/assets/${request.sourceId}.html` ||
-          request.targetFile !== `screens/${request.targetScreen}/assets/${request.targetId}.html`) {
+          request.sourceFile !== `screens/${request.sourceScreen}/assets/${request.sourceId}${validation.TEMPLATE_FILE_EXTENSION}` ||
+          request.targetFile !== `screens/${request.targetScreen}/assets/${request.targetId}${validation.TEMPLATE_FILE_EXTENSION}`) {
         throw requestError("Each asset copy must identify valid source and target assets and a destination Screen.");
       }
       if (seenTargets.has(request.targetFile)) {
@@ -462,7 +464,7 @@ async function saveProjectFiles(projectRoot, files, assetCopies) {
         throw requestError(`${file.path}: ${error.message || String(error)}`);
       }
       updates.push({ path: file.path, content: file.content, create });
-    } else if (extension === ".html") {
+    } else if (extension === validation.TEMPLATE_FILE_EXTENSION) {
       if (typeof file.content !== "string" || Object.hasOwn(file, "data")) {
         throw requestError("Asset document save entries must contain text content.");
       }
@@ -473,9 +475,9 @@ async function saveProjectFiles(projectRoot, files, assetCopies) {
         validation.assetCategoryPath(assetDocument, `${file.path} front matter`);
         validation.validateAssetAttributes(assetDocument, `${file.path} front matter`);
         validation.validateAssetSlots(assetDocument, `${file.path} front matter`);
-        const expectedId = path.posix.basename(file.path, ".html");
+        const expectedId = path.posix.basename(file.path, validation.TEMPLATE_FILE_EXTENSION);
         if (assetDocument.id !== expectedId) {
-          throw new Error(`front matter id must match Asset template file name "${expectedId}.html".`);
+          throw new Error(`front matter id must match template file name "${expectedId}${validation.TEMPLATE_FILE_EXTENSION}".`);
         }
         validation.validateAssetSlotMarkup(assetDocument, body, file.path);
         const attributeNames = new Set(Object.keys(assetDocument.attributes || {}));

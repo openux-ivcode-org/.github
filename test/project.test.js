@@ -55,12 +55,12 @@ async function createProject() {
         {
           id: "page-layout",
           type: "template",
-          src: "screens/home/assets/layout.html",
+          src: "screens/home/assets/layout.stml",
           slots: {
             content: [{
               id: "continue-button",
               type: "template",
-              src: "assets/button.html",
+              src: "assets/button.stml",
               attributes: { label: "Continue" },
               visibility: { default: false, "dialog-open": true }
             }]
@@ -69,7 +69,8 @@ async function createProject() {
       ]
     }),
     "assets/brand.png": Buffer.from("image"),
-    "assets/button.html": assetDocument({
+    "assets/static-page.html": "<main>Static HTML</main>\n",
+    "assets/button.stml": assetDocument({
       id: "button",
       name: "Button",
       description: "A button template.",
@@ -77,13 +78,13 @@ async function createProject() {
         label: { type: "string", default: "Continue", overridable: true }
       }
     }, "<button>${attributes.label}</button>\n"),
-    "screens/home/assets/layout.html": assetDocument({
+    "screens/home/assets/layout.stml": assetDocument({
       id: "layout",
       name: "Layout",
       description: "A layout with a content slot.",
       slots: [{ id: "content", name: "Content" }]
     }, "<main><div data-openux-slot=\"content\"></div></main>\n"),
-    "screens/home/assets/unused.html": assetDocument({
+    "screens/home/assets/unused.stml": assetDocument({
       id: "unused",
       name: "Unused",
       description: "Unused template asset."
@@ -110,13 +111,14 @@ test("discovers Assets and validates text, image, and template Elements", async 
   try {
     const result = await validateProject(root);
     assert.deepEqual(result.errors, []);
-    assert.equal(result.assets.get("assets/button.html").type, "template");
+    assert.equal(result.assets.get("assets/button.stml").type, "template");
     assert.equal(result.assets.get("assets/brand.png").type, "image");
-    assert.equal(result.assets.get("screens/home/assets/layout.html").type, "template");
-    assert.equal(result.usedAssetFiles.has("assets/button.html"), true);
+    assert.equal(result.assets.get("assets/static-page.html").type, "resource");
+    assert.equal(result.assets.get("screens/home/assets/layout.stml").type, "template");
+    assert.equal(result.usedAssetFiles.has("assets/button.stml"), true);
     assert.equal(result.usedAssetFiles.has("assets/brand.png"), true);
-    assert.equal(result.usedAssetFiles.has("screens/home/assets/layout.html"), true);
-    assert.equal(result.usedAssetFiles.has("screens/home/assets/unused.html"), false);
+    assert.equal(result.usedAssetFiles.has("screens/home/assets/layout.stml"), true);
+    assert.equal(result.usedAssetFiles.has("screens/home/assets/unused.stml"), false);
     assert.equal(result.usedAssetFiles.has("screens/home/assets/images/chart.png"), false);
     assert.deepEqual([...result.referencedSpecPaths], ["screens/home/specs/element-continue-button.md"]);
   } finally {
@@ -151,7 +153,7 @@ test("rejects manifest Asset registries and invalid Screen Element references", 
 test("validates template front matter, filename IDs, resources, and slot declarations", async () => {
   const root = await createProject();
   try {
-    const templatePath = path.join(root, "assets", "button.html");
+    const templatePath = path.join(root, "assets", "button.stml");
     await fs.writeFile(templatePath, "<button>Missing front matter</button>");
     let result = await validateProject(root);
     assert.ok(result.errors.some((error) => error.includes("must begin with a YAML front matter block")));
@@ -164,7 +166,7 @@ test("validates template front matter, filename IDs, resources, and slot declara
     result = await validateProject(root);
     assert.ok(result.errors.some((error) => error.includes("front matter id must match filename \"button\"")));
 
-    const layoutPath = path.join(root, "screens", "home", "assets", "layout.html");
+    const layoutPath = path.join(root, "screens", "home", "assets", "layout.stml");
     await fs.writeFile(layoutPath, assetDocument({
       id: "layout",
       name: "Layout",
@@ -178,10 +180,10 @@ test("validates template front matter, filename IDs, resources, and slot declara
   }
 });
 
-test("discovers image Assets recursively while requiring template HTML at the assets root", async () => {
+test("discovers image Assets recursively while requiring STML templates at the assets root", async () => {
   const root = await createProject();
   try {
-    const nestedTemplate = path.join(root, "assets", "nested", "card.html");
+    const nestedTemplate = path.join(root, "assets", "nested", "card.stml");
     await fs.mkdir(path.dirname(nestedTemplate), { recursive: true });
     await fs.writeFile(nestedTemplate, assetDocument({
       id: "card",
@@ -189,7 +191,7 @@ test("discovers image Assets recursively while requiring template HTML at the as
       description: "Nested template."
     }, "<article>Card</article>"));
     const result = await validateProject(root);
-    assert.ok(result.errors.some((error) => error.includes("template HTML files must be directly inside an assets directory")));
+    assert.ok(result.errors.some((error) => error.includes("STML template files must be directly inside an assets directory")));
     assert.equal(result.assets.get("screens/home/assets/images/chart.png").type, "image");
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -225,9 +227,9 @@ test("CLI init creates a discoverable template Asset and an Element-based Screen
     ));
     assert.equal(Object.hasOwn(manifest, "asset-templates"), false);
     assert.equal(screen.elements[0].type, "template");
-    assert.equal(screen.elements[0].src, "screens/home/assets/page-layout.html");
+    assert.equal(screen.elements[0].src, "screens/home/assets/page-layout.stml");
     assert.ok(await fs.readFile(
-      path.join(parent, "openux", "screens", "home", "assets", "page-layout.html"),
+      path.join(parent, "openux", "screens", "home", "assets", "page-layout.stml"),
       "utf8"
     ));
   } finally {
@@ -242,16 +244,16 @@ test("CLI prune reports discovered unreferenced Assets and removes only files on
       encoding: "utf8"
     });
     assert.equal(dryRun.status, 0, dryRun.stderr || dryRun.stdout);
-    assert.match(dryRun.stdout, /template unused \(screens\/home\/assets\/unused\.html\)/);
+    assert.match(dryRun.stdout, /template unused \(screens\/home\/assets\/unused\.stml\)/);
     assert.match(dryRun.stdout, /image chart\.png \(screens\/home\/assets\/images\/chart\.png\)/);
-    await fs.access(path.join(root, "screens", "home", "assets", "unused.html"));
+    await fs.access(path.join(root, "screens", "home", "assets", "unused.stml"));
 
     const originalManifest = await fs.readFile(path.join(root, "project.yml"), "utf8");
     const applied = spawnSync(process.execPath, [cliPath, "prune", "--apply", "--project", root], {
       encoding: "utf8"
     });
     assert.equal(applied.status, 0, applied.stderr || applied.stdout);
-    await assert.rejects(fs.access(path.join(root, "screens", "home", "assets", "unused.html")));
+    await assert.rejects(fs.access(path.join(root, "screens", "home", "assets", "unused.stml")));
     await assert.rejects(fs.access(path.join(root, "screens", "home", "assets", "images", "chart.png")));
     assert.equal(await fs.readFile(path.join(root, "project.yml"), "utf8"), originalManifest);
   } finally {

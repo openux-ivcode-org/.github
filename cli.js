@@ -241,12 +241,12 @@ async function runInitCommand(args) {
       elements: [{
         id: "page-layout-instance",
         type: "template",
-        src: "screens/home/assets/page-layout.html",
+        src: `screens/home/assets/page-layout${validation.TEMPLATE_FILE_EXTENSION}`,
         name: "Page layout",
         slots: { content: [] }
       }]
     })],
-    ["screens/home/assets/page-layout.html", validation.formatAssetDocument(
+    [`screens/home/assets/page-layout${validation.TEMPLATE_FILE_EXTENSION}`, validation.formatAssetDocument(
       YAML.stringify({
         id: "page-layout",
         name: "Page Layout",

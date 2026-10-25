@@ -4,7 +4,7 @@ An Asset is a reusable file discovered under the shared `openux/assets/` directo
 
 ```text
 openux/screens/home/assets/
-├── brand-mark.html
+├── brand-mark.stml
 ├── logo.svg
 └── images/
     └── dashboard-chart.png
@@ -14,9 +14,9 @@ Image files (AVIF, BMP, GIF, ICO, JPEG, PNG, SVG, and WebP) can be placed direct
 
 ## Template Assets
 
-A `.html` file directly inside an `assets/` directory is a template Asset. Name it `<template-id>.html`; the `id` in its YAML front matter must match the filename. The document contains YAML front matter followed by an HTML fragment.
+A `.stml` (Spec Template Markup Language) file directly inside an `assets/` directory is a template Asset. Name it `<template-id>.stml`; the `id` in its YAML front matter must match the filename. The document contains YAML front matter followed by an HTML fragment.
 
-```html
+```stml
 ---
 id: brand-mark
 name: Brand Mark
@@ -34,7 +34,7 @@ The opening and closing delimiters are required. Header properties must be valid
 
 | Property | Type | Required | Definition |
 |---|---|---:|---|
-| `id` | string | Yes | Template identifier. It must match the filename and use lowercase letters, numbers, and hyphens, starting with a lowercase letter. |
+| `id` | string | Yes | Template identifier. It must match the filename without the `.stml` extension and use lowercase letters, numbers, and hyphens, starting with a lowercase letter. |
 | `name` | string | Yes | Non-empty human-readable template name. |
 | `description` | string | Yes | Description of the template. |
 | `category` | string | No | Slash-delimited Asset library category path, such as `Forms/Inputs`. Omit for an uncategorized Asset. |

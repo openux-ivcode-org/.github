@@ -31,7 +31,7 @@ spec: screens/home/specs/screen.md
 # In a Screen Element:
 id: sign-in-button
 type: template
-src: assets/button.html
+src: assets/button.stml
 ```
 
 ```markdown
