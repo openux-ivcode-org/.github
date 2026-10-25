@@ -412,6 +412,24 @@ test("writes a browser snapshot to the shared cache and invalidates it on annota
       body: JSON.stringify({ screenId: "home", annotations: [], previewSize: selection.previewSize })
     });
     assert.equal(await readBrowserSnapshot(path.join(rootDirectory, "openux")), null);
+
+    const stateAfterAnnotationUpdate = await fetch(`${baseUrl}/api/selection`);
+    const annotationState = await stateAfterAnnotationUpdate.json();
+    const savedAgain = await fetch(`${baseUrl}/api/snapshots?screenId=home`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "image/png",
+        "X-OpenUX-Selection-Updated-At": state.updatedAt,
+        "X-OpenUX-Annotation-Updated-At": annotationState.annotations.updatedAt
+      },
+      body: png
+    });
+    assert.equal(savedAgain.status, 200);
+    const cleared = await fetch(`${baseUrl}/api/annotations`, { method: "DELETE" });
+    assert.equal(cleared.status, 200);
+    assert.equal(await readBrowserSnapshot(path.join(rootDirectory, "openux")), null);
+    const afterSessionReset = await fetch(`${baseUrl}/api/annotations?screenId=home`);
+    assert.deepEqual((await afterSessionReset.json()).annotations, []);
   });
 });
 

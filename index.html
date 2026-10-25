@@ -87,33 +87,19 @@
             <label class="preview-state-label" for="preview-state-select">Preview state</label>
             <select class="preview-state-select" id="preview-state-select"></select>
             <button class="preview-state-add" id="add-preview-state" type="button">Add state</button>
-            <div class="annotation-controls" role="group" aria-label="Screen annotations">
-              <button
-                class="preview-state-add"
-                id="annotation-mode-toggle"
-                type="button"
-                aria-pressed="false"
-                title="Draw temporary marks over the Screen preview"
-              >Annotate</button>
-              <select
-                class="annotation-tool-select"
-                id="annotation-tool-select"
-                aria-label="Annotation tool"
-                disabled
-              >
-                <option value="pen">Pen</option>
-                <option value="circle">Circle</option>
-                <option value="rectangle">Rectangle</option>
-                <option value="arrow">Arrow</option>
-                <option value="highlight">Highlighter</option>
-                <option value="note">Note</option>
-              </select>
-              <button class="preview-state-add" id="annotation-undo" type="button" disabled>Undo</button>
-              <button class="preview-state-add" id="annotation-redo" type="button" disabled>Redo</button>
-              <button class="preview-state-add" id="annotation-clear" type="button" disabled>Clear</button>
-              <span class="annotation-status" id="annotation-status" role="status" aria-live="polite"></span>
-            </div>
           </div>
+          <button
+            class="preview-state-add open-screen-preview-button"
+            id="screen-preview-new-tab"
+            type="button"
+            title="Open this Screen as a static webpage in a new tab"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M9 2h5v5M14 2 7 9"></path>
+              <path d="M12 9v4H3V4h4"></path>
+            </svg>
+            <span>Open preview</span>
+          </button>
           <div class="screen-view-selector" role="group" aria-label="Screen view">
             <button
               class="screen-view-button"
@@ -144,6 +130,71 @@
           ></textarea>
           <div class="screen-yaml-status" id="screen-yaml-status" role="status" aria-live="polite"></div>
         </section>
+        <div class="annotation-toolbar" id="annotation-toolbar" role="toolbar" aria-label="Screen annotation tools" hidden>
+        <div class="annotation-tool-buttons" role="group" aria-label="Choose annotation tool">
+          <button class="annotation-tool-button" id="annotation-tool-pen" type="button" data-annotation-tool="pen" aria-label="Pen" title="Pen" aria-pressed="true" disabled>
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="m4 13.5 8.8-8.8a1.8 1.8 0 0 1 2.5 2.5l-8.8 8.8L3 17z"></path>
+              <path d="m11.5 6 2.5 2.5"></path>
+            </svg>
+          </button>
+          <button class="annotation-tool-button" id="annotation-tool-circle" type="button" data-annotation-tool="circle" aria-label="Circle" title="Circle" aria-pressed="false" disabled>
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <circle cx="10" cy="10" r="6.5"></circle>
+            </svg>
+          </button>
+          <button class="annotation-tool-button" id="annotation-tool-rectangle" type="button" data-annotation-tool="rectangle" aria-label="Rectangle" title="Rectangle" aria-pressed="false" disabled>
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <rect x="3.5" y="4.5" width="13" height="11" rx="1.5"></rect>
+            </svg>
+          </button>
+          <button class="annotation-tool-button" id="annotation-tool-arrow" type="button" data-annotation-tool="arrow" aria-label="Arrow" title="Arrow" aria-pressed="false" disabled>
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M4 15 15 4M7 4h8v8"></path>
+            </svg>
+          </button>
+          <button class="annotation-tool-button" id="annotation-tool-highlight" type="button" data-annotation-tool="highlight" aria-label="Highlighter" title="Highlighter" aria-pressed="false" disabled>
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="m5 12 7-7 4 4-7 7H5z"></path>
+              <path d="M4 16h11"></path>
+            </svg>
+          </button>
+          <button class="annotation-tool-button" id="annotation-tool-note" type="button" data-annotation-tool="note" aria-label="Note" title="Note" aria-pressed="false" disabled>
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M4 3.5h12v10H9l-4 3v-3H4z"></path>
+              <path d="M7 7h6M7 10h4"></path>
+            </svg>
+          </button>
+        </div>
+        <span class="annotation-toolbar-divider" aria-hidden="true"></span>
+        <div class="annotation-action-buttons" role="group" aria-label="Annotation actions">
+          <button class="annotation-tool-button" id="annotation-undo" type="button" aria-label="Undo annotation" title="Undo" disabled>
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M7 6 3.5 9.5 7 13"></path>
+              <path d="M4 9.5h7a5 5 0 0 1 5 5"></path>
+            </svg>
+          </button>
+          <button class="annotation-tool-button" id="annotation-redo" type="button" aria-label="Redo annotation" title="Redo" disabled>
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="m13 6 3.5 3.5L13 13"></path>
+              <path d="M16 9.5H9a5 5 0 0 0-5 5"></path>
+            </svg>
+          </button>
+          <button class="annotation-tool-button" id="annotation-clear" type="button" aria-label="Clear annotations" title="Clear annotations" disabled>
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M4.5 6h11M8 6V4h4v2m2 0-.7 10H6.7L6 6"></path>
+              <path d="M8.5 9v4M11.5 9v4"></path>
+            </svg>
+          </button>
+        </div>
+        <span class="annotation-status" id="annotation-status" role="status" aria-live="polite"></span>
+        <button class="annotation-mode-exit" id="annotation-mode-exit" type="button" aria-label="Exit annotation mode" title="Exit annotation mode" hidden>
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="m5 5 10 10M15 5 5 15"></path>
+          </svg>
+          <span>Exit</span>
+        </button>
+        </div>
       </section>
 
       <section class="spec-editor-panel" id="spec-editor-panel" aria-label="Behavior spec Markdown editor" hidden>

@@ -16,6 +16,7 @@ export class WorkspaceViewRenderer {
     state.assetPreviewVersion += 1;
     services.byId("main").classList.remove("asset-editing");
     services.byId("main").classList.remove("spec-editing");
+    services.byId("main").classList.add("screen-editing");
     services.byId("asset-document-editor-panel").hidden = true;
     services.byId("asset-document-source").oninput = null;
     services.byId("spec-editor-panel").hidden = true;

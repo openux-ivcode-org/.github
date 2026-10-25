@@ -936,6 +936,7 @@ function createServer(options = {}) {
         if (screenId && !/^[a-z][a-z0-9-]*$/.test(screenId)) {
           throw requestError("Invalid Screen id for clearing annotations.");
         }
+        await clearBrowserSnapshot(projectRoot);
         const clearedScreenIds = screenId
           ? (annotationsByScreen.has(screenId) ? [screenId] : [])
           : [...annotationsByScreen.keys()];

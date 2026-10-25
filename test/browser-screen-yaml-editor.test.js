@@ -20,6 +20,42 @@ function createElement() {
   };
 }
 
+test("shows annotation toolbar only for the Screen preview", async () => {
+  const { ScreenYamlEditor } = await import("../browser/ScreenYamlEditor.mjs");
+  const elements = new Map([
+    ["screen-view-preview", createElement()],
+    ["screen-view-yaml", createElement()],
+    ["preview-state-controls", createElement()],
+    ["screen-preview", createElement()],
+    ["screen-yaml-editor-panel", createElement()],
+    ["annotation-toolbar", createElement()],
+    ["screen-yaml-source", createElement()],
+    ["preview-state-toolbar", createElement()]
+  ]);
+  const editor = new ScreenYamlEditor({
+    documentObject: { getElementById: (id) => elements.get(id) || createElement() },
+    fetcher: async () => ({ ok: true, json: async () => ({}) }),
+    getActiveScreen: () => null,
+    getActiveScreenIndex: () => 0,
+    getScreenIndex: () => 0,
+    invalidYamlFiles: new Map(),
+    markEdited() {},
+    renderNavigation() {},
+    renderScreen() {},
+    updateSaveControls() {},
+    validatePreviewStates() {}
+  });
+
+  editor.syncViewMode();
+  assert.equal(elements.get("annotation-toolbar").hidden, false);
+  editor.setViewMode("yaml");
+  assert.equal(elements.get("annotation-toolbar").hidden, true);
+  editor.setViewMode("preview");
+  assert.equal(elements.get("annotation-toolbar").hidden, false);
+  editor.hideControls();
+  assert.equal(elements.get("annotation-toolbar").hidden, true);
+});
+
 test("parses valid Screen YAML and refreshes the active Screen", async () => {
   const { ScreenYamlEditor } = await import("../browser/ScreenYamlEditor.mjs");
   const screen = {

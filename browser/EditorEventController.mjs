@@ -26,6 +26,7 @@ export class EditorEventController {
     services.byId("screen-view-yaml").addEventListener("click", () =>
       services.setScreenViewMode("yaml")
     );
+    services.byId("screen-preview-new-tab").addEventListener("click", services.openScreenPreview);
     services.byId("screen-selector-toggle").addEventListener("click", () =>
       services.setScreenSelectorOpen(services.byId("screen-selector-panel").hidden)
     );

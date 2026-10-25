@@ -252,6 +252,7 @@ const screenInstanceRenderer = new ScreenInstanceRenderer({
     get viewingSpec() { return viewingSpec; },
     get screens() { return screens; },
     get activeScreenIndex() { return activeScreenIndex; },
+    get isRenderOnly() { return isRenderOnly; },
     get assetFiles() { return assetFiles; },
     get paletteAssetDropHandled() { return paletteAssetDropHandled; },
     set paletteAssetDropHandled(value) { paletteAssetDropHandled = value; }
@@ -675,8 +676,21 @@ function renderPreviewStateControls(screen) {
   previewStateController.renderControls(screen);
 }
 
+function openScreenPreview() {
+  const screen = screens[activeScreenIndex];
+  if (!screen) return;
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("render", screen.id);
+  const stateId = previewStateController.getActiveId(screen.data);
+  if (stateId !== "default") url.searchParams.set("state", stateId);
+  window.open(url.href, "_blank", "noopener,noreferrer");
+}
+
 function hidePreviewStateControls() {
   screenYamlEditor.hideControls();
+  byId("main").classList.remove("screen-editing");
 }
 
 function setScreenYamlStatus(screen, message, isError = false) {
@@ -1487,6 +1501,7 @@ const editorEventController = new EditorEventController({
     confirm: (message) => window.confirm(message),
     loadProject,
     createScreen,
+    openScreenPreview,
     setScreenViewMode,
     setScreenSelectorOpen,
     renderScreenSelector,

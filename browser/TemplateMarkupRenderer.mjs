@@ -41,7 +41,8 @@ export class TemplateMarkupRenderer {
           min-height: 48px;
           border-radius: 8px;
         }
-        .openux-drop-slot > .asset-instance {
+        .openux-drop-slot > .asset-instance,
+        .openux-render-slot > .asset-instance {
           box-sizing: border-box;
           width: 100%;
           min-width: 0;

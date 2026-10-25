@@ -25,6 +25,7 @@ export class ScreenInstanceRenderer {
       }
     }
 
+    const editorInteractionsEnabled = !state.isRenderOnly;
     const host = services.element("div", "asset-instance");
     host.dataset.instancePath = JSON.stringify(instancePath);
     host.hidden = Boolean(screenId && !services.isInstanceVisible(instance));
@@ -37,11 +38,13 @@ export class ScreenInstanceRenderer {
       host.dataset.openuxInstancePath = JSON.stringify(instancePath);
     }
     if (instancePath.length === 1) host.dataset.instanceIndex = String(instancePath[0]);
-    host.draggable = instancePath.length > 0;
-    host.tabIndex = 0;
-    host.setAttribute("role", "group");
-    host.setAttribute("aria-label", services.getElementLabel(instance));
-    if (services.sameInstancePath(state.activeInstancePath, instancePath)) {
+    if (editorInteractionsEnabled) {
+      host.draggable = instancePath.length > 0;
+      host.tabIndex = 0;
+      host.setAttribute("role", "group");
+      host.setAttribute("aria-label", services.getElementLabel(instance));
+    }
+    if (editorInteractionsEnabled && services.sameInstancePath(state.activeInstancePath, instancePath)) {
       host.classList.add("selected");
     }
 
@@ -59,7 +62,9 @@ export class ScreenInstanceRenderer {
       throw new Error(`Element "${instance.id}" has unsupported type "${type}".`);
     }
 
-    if (instancePath.length) this.configureInteractions(host, instance, instancePath, screenId);
+    if (editorInteractionsEnabled && instancePath.length) {
+      this.configureInteractions(host, instance, instancePath, screenId);
+    }
     if (type === "template") {
       const root = usesLightDom ? host : host.shadowRoot;
       await this.renderSlots(root, instance, template, instancePath, screenId, screenName);
@@ -186,11 +191,15 @@ export class ScreenInstanceRenderer {
     const slotTargets = [...root.querySelectorAll("[data-openux-slot]")];
     for (const slot of template.data.slots) {
       const target = slotTargets.find((node) => node.getAttribute("data-openux-slot") === slot.id);
-      target.classList.add("openux-drop-slot");
-      target.setAttribute("role", "group");
-      target.setAttribute("aria-label", `Drop zone: ${slot.name || slot.id}`);
-      target.setAttribute("data-placeholder", `Drop Elements into ${slot.name || slot.id}`);
-      if (instancePath.length) this.configureSlotInteractions(target, instancePath, slot.id);
+      if (!state.isRenderOnly) {
+        target.classList.add("openux-drop-slot");
+        target.setAttribute("role", "group");
+        target.setAttribute("aria-label", `Drop zone: ${slot.name || slot.id}`);
+        target.setAttribute("data-placeholder", `Drop Elements into ${slot.name || slot.id}`);
+        if (instancePath.length) this.configureSlotInteractions(target, instancePath, slot.id);
+      } else {
+        target.classList.add("openux-render-slot");
+      }
       const children = slots[slot.id] || [];
       if (!Array.isArray(children)) {
         throw new Error(`Layout slot "${slot.id}" contents must be a list.`);

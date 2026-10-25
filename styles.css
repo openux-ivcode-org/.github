@@ -485,6 +485,17 @@
         radial-gradient(circle at 50% 40%, var(--ui-canvas-glow), transparent 52%),
         var(--canvas);
     }
+    .canvas.screen-editing {
+      padding: 0;
+      background: var(--canvas);
+    }
+    .canvas.screen-editing .form-content {
+      padding: 0;
+    }
+    .canvas.screen-editing .screen-preview > .form-content > .asset-instance {
+      margin: 0;
+      padding: 0;
+    }
 
     .eyebrow {
       color: var(--ui-text-faint);
@@ -513,6 +524,9 @@
       border: 0;
       border-radius: 0;
       background: transparent;
+    }
+    .canvas.screen-editing > .stage {
+      overflow: hidden;
     }
 
     .preview-state-toolbar {
@@ -564,31 +578,88 @@
       gap: 8px;
     }
     .preview-state-controls[hidden] { display: none; }
-    .annotation-controls {
+    .annotation-toolbar {
+      min-height: 56px;
       display: flex;
       align-items: center;
-      flex: 0 1 auto;
-      min-width: 0;
-      gap: 5px;
+      flex: none;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 8px 12px;
+      border-top: 1px solid var(--line);
+      background: var(--panel);
     }
-    .annotation-tool-select {
-      min-width: 84px;
-      padding: 7px 24px 7px 8px;
+    .annotation-toolbar[hidden] { display: none; }
+    .annotation-mode-exit,
+    .annotation-tool-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: none;
+      width: 34px;
+      height: 34px;
+      padding: 0;
       border: 1px solid var(--line);
       border-radius: 7px;
-      color: var(--ui-text-strong);
-      background: var(--panel);
+      color: var(--ui-text-medium);
+      background: var(--ui-input-alt);
+      cursor: pointer;
+    }
+    .annotation-mode-exit {
+      width: auto;
+      gap: 7px;
+      padding: 0 10px;
+      color: var(--ui-text-medium);
       font: inherit;
       font-size: 11px;
+      font-weight: 650;
     }
-    .annotation-tool-select:focus-visible,
-    .annotation-controls button:focus-visible {
+    .annotation-tool-button[aria-pressed="true"] {
+      border-color: var(--studio-focus);
+      color: var(--ui-primary-strong);
+      background: var(--ui-primary-soft-bg);
+    }
+    .annotation-tool-button:hover:not(:disabled),
+    .annotation-mode-exit:hover:not(:disabled) {
+      border-color: var(--studio-focus);
+    }
+    .annotation-tool-button:disabled,
+    .annotation-mode-exit:disabled {
+      opacity: .45;
+      cursor: not-allowed;
+    }
+    .annotation-mode-exit[hidden] { display: none; }
+    .annotation-mode-exit svg,
+    .annotation-tool-button svg {
+      width: 17px;
+      height: 17px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.7;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .annotation-tool-buttons,
+    .annotation-action-buttons {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .annotation-toolbar-divider {
+      width: 1px;
+      height: 24px;
+      margin: 0 2px;
+      background: var(--line);
+    }
+    .annotation-toolbar button:focus-visible {
       outline: 2px solid var(--studio-focus);
       outline-offset: 2px;
     }
     .annotation-status {
-      max-width: 180px;
+      min-width: 0;
+      max-width: min(360px, 35%);
       overflow: hidden;
+      flex: 1 1 140px;
       color: var(--ui-status);
       font-size: 10px;
       text-overflow: ellipsis;
@@ -621,6 +692,21 @@
       font-size: 11px;
       font-weight: 650;
       cursor: pointer;
+    }
+    .open-screen-preview-button {
+      display: inline-flex;
+      align-items: center;
+      flex: none;
+      gap: 6px;
+    }
+    .open-screen-preview-button svg {
+      width: 14px;
+      height: 14px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
     .preview-state-select:focus-visible, .preview-state-add:focus-visible {
       outline: 2px solid var(--studio-focus);
@@ -1405,9 +1491,12 @@
       .sidebar { display: none; }
       .panel-resizer { display: none; }
       .canvas { min-height: calc(100vh - 58px); padding: 20px 12px; }
+      .canvas.screen-editing { height: calc(100vh - 58px); min-height: 0; padding: 0; }
       .canvas.spec-editing { height: calc(100vh - 58px); min-height: 640px; }
       .stage { min-height: 70vh; flex: none; }
       .screen-preview { min-height: 70vh; }
+      .canvas.screen-editing > .stage { min-height: 0; height: 100%; flex: 1; overflow: hidden; }
+      .canvas.screen-editing .screen-preview { min-height: 0; }
       .form-content { padding: 35px 26px 28px; }
       .project-overview-preview { padding: 16px; }
       .project-overview-stats, .project-overview-sections { grid-template-columns: minmax(0, 1fr); }
@@ -1420,7 +1509,11 @@
       .reset-button, .save-button { padding: 6px; font-size: 10px; }
     }
 
-    body.render-only { min-width: 0; background: var(--theme-background, #fff); }
+    body.render-only {
+      min-width: 0;
+      overflow-y: auto;
+      background: var(--theme-background, #fff);
+    }
     body.render-only .skip-link,
     body.render-only .topbar,
     body.render-only .sidebar,
@@ -1428,9 +1521,29 @@
     body.render-only .panel-resizer,
     body.render-only .editor-message,
     body.render-only .asset-context-menu,
-    body.render-only .asset-delete-dialog { display: none !important; }
-    body.render-only .workspace { display: block; width: 100%; height: 100vh; }
-    body.render-only .canvas { width: 100%; height: 100vh; min-height: 100vh; padding: 0; background: none; }
-    body.render-only .stage { width: 100%; height: 100vh; min-height: 100vh; overflow: visible; }
-    body.render-only .screen-preview { width: 100%; height: 100vh; min-height: 100vh; overflow: visible; }
+    body.render-only .asset-delete-dialog,
+    body.render-only .annotation-toolbar { display: none !important; }
+    body.render-only .asset-instance { cursor: auto; }
+    body.render-only .asset-instance:hover { border-color: transparent; }
+    body.render-only .asset-instance.selected {
+      border-color: transparent;
+      background: transparent;
+    }
+    body.render-only .screen-preview > .form-content > .asset-instance { border: 0; }
+    body.render-only .workspace { display: block; width: 100%; height: auto; min-height: 100vh; }
+    body.render-only .canvas { width: 100%; height: auto; min-height: 100vh; padding: 0; background: none; }
+    body.render-only .canvas.screen-editing > .stage {
+      width: 100%;
+      height: auto;
+      min-height: 100vh;
+      flex: none;
+      overflow: visible;
+    }
+    body.render-only .canvas.screen-editing .screen-preview {
+      width: 100%;
+      height: auto;
+      min-height: 100vh;
+      flex: none;
+      overflow: visible;
+    }
     body.render-only .preview-state-toolbar { display: none; }

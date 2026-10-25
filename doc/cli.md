@@ -28,7 +28,7 @@ Run the commands as `openux ...` when the package's `bin` entry is available, or
 
 In the Screen preview, choose **Annotate**, select a drawing tool, and mark an area. Pen, circle, rectangle, arrow, highlighter, and note marks are available. Undo, redo, and Clear manage the current Screen's marks. Notes can carry short instructions; you can also describe marks in your AI conversation.
 
-Annotations are held in the running editor server's memory and are not saved to project files. `openux server selected` includes the selected Screen's marks and any associated Element paths. Use `openux server annotations [--screen <id>]` to inspect them, or `openux server annotations clear [--screen <id>]` to clear them. Without `--screen`, `clear` uses the Screen currently selected in the editor.
+Annotations are held in the running editor server's memory and are not saved to project files. They remain available to the AI while the editor page is open; refreshing or reopening the editor clears the annotations and cached browser snapshot. `openux server selected` includes the selected Screen's marks and any associated Element paths. Use `openux server annotations [--screen <id>]` to inspect them, or `openux server annotations clear [--screen <id>]` to clear them. Without `--screen`, `clear` uses the Screen currently selected in the editor.
 
 ## Initialization
 

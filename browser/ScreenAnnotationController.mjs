@@ -23,6 +23,7 @@ export class ScreenAnnotationController {
     this.annotationRevision = 0;
     this.annotationUpdatedAt = null;
     this.saveQueue = Promise.resolve();
+    this.sessionResetPromise = null;
   }
 
   bind() {
@@ -37,12 +38,10 @@ export class ScreenAnnotationController {
       });
       this.resizeObserver.observe(preview);
     }
-    services.byId("annotation-mode-toggle").addEventListener("click", () =>
-      this.setEnabled(!this.enabled)
-    );
-    services.byId("annotation-tool-select").addEventListener("change", (event) => {
-      if (ANNOTATION_TOOLS.has(event.target.value)) this.tool = event.target.value;
+    services.document.querySelectorAll("[data-annotation-tool]").forEach((button) => {
+      button.addEventListener("click", () => this.selectTool(button.dataset.annotationTool));
     });
+    services.byId("annotation-mode-exit").addEventListener("click", () => this.setEnabled(false));
     services.byId("annotation-undo").addEventListener("click", () => this.undo());
     services.byId("annotation-redo").addEventListener("click", () => this.redo());
     services.byId("annotation-clear").addEventListener("click", () => this.clear());
@@ -89,7 +88,19 @@ export class ScreenAnnotationController {
     this.redoStack = [];
     this.render();
     this.setStatus("");
-    if (nextScreenId) await this.refresh();
+    if (nextScreenId) {
+      if (!this.sessionResetPromise) {
+        this.sessionResetPromise = this.clearPreviousSessionAnnotations();
+      }
+      await this.sessionResetPromise;
+      if (this.screenId === nextScreenId) await this.refresh();
+    }
+  }
+
+  async clearPreviousSessionAnnotations() {
+    const response = await this.services.fetcher("/api/annotations", { method: "DELETE" });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
   }
 
   async refresh() {
@@ -118,6 +129,12 @@ export class ScreenAnnotationController {
     this.render();
     this.updateControls();
     this.setStatus(this.enabled ? "Draw an annotation on the Screen preview." : "");
+  }
+
+  selectTool(tool) {
+    if (!ANNOTATION_TOOLS.has(tool) || !this.screenId) return;
+    this.tool = tool;
+    this.setEnabled(true);
   }
 
   undo() {
@@ -254,11 +271,16 @@ export class ScreenAnnotationController {
 
   updateControls() {
     const hasAnnotations = this.annotations.length > 0;
-    const toggle = this.services.byId("annotation-mode-toggle");
-    toggle.textContent = this.enabled ? "Finish drawing" : "Annotate";
-    toggle.setAttribute("aria-pressed", String(this.enabled));
-    toggle.disabled = !this.screenId;
-    this.services.byId("annotation-tool-select").disabled = !this.enabled;
+    const exitButton = this.services.byId("annotation-mode-exit");
+    exitButton.hidden = !this.enabled;
+    exitButton.disabled = !this.screenId;
+    this.services.document.querySelectorAll("[data-annotation-tool]").forEach((button) => {
+      button.disabled = !this.screenId;
+      button.setAttribute(
+        "aria-pressed",
+        String(this.enabled && button.dataset.annotationTool === this.tool)
+      );
+    });
     this.services.byId("annotation-undo").disabled = !hasAnnotations;
     this.services.byId("annotation-redo").disabled = this.undoStack.length === 0;
     this.services.byId("annotation-clear").disabled = !hasAnnotations;
@@ -286,7 +308,7 @@ export class ScreenAnnotationController {
     if (!preview) return;
     this.overlay = preview.querySelector(":scope > .screen-annotation-overlay") ||
       this.createOverlay(preview);
-    const width = Math.max(1, preview.clientWidth, preview.getBoundingClientRect().width);
+    const width = Math.max(1, preview.clientWidth || preview.getBoundingClientRect().width);
     const height = Math.max(1, preview.clientHeight, preview.scrollHeight);
     this.renderWidth = width;
     this.renderHeight = height;
