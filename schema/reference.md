@@ -47,7 +47,7 @@ Before finishing, inspect the complete Screen and its referenced templates. Audi
 4. After direct project-file edits, run `openux server update` to notify connected browser tabs. Tabs with unsaved edits are left untouched and prompted to save or reset before refreshing.
 5. Do not report completion until validation succeeds and the rendered Screen has been checked when rendering is available. Clearly state any check that could not be run.
 
-Use `openux server selected` when the user asks about the browser editor's current selection. Edit project files directly; the CLI provides schema guidance, validation, rendering, and editor coordination. Do not remove Assets or specs as a side effect. `openux prune` only deletes files when explicitly run with `--apply`. Preserve unrelated user changes and avoid committing generated renders unless requested.
+Use `openux server selected` when the user asks about the browser editor's current selection or has drawn temporary Screen annotations; its JSON includes the marks, Element paths, and nearby target text when available. Use `openux render <screen> --format image --annotations --output <file>` to capture a full Screen image with the marks overlaid. Use `openux server annotations clear` to remove marks from the selected Screen when requested. Annotations are temporary server memory, not project files. Edit project files directly; the CLI provides schema guidance, validation, rendering, and editor coordination. Do not remove Assets or specs as a side effect. `openux prune` only deletes files when explicitly run with `--apply`. Preserve unrelated user changes and avoid committing generated renders unless requested.
 
 ## Final validation checklist
 

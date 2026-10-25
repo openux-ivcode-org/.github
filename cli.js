@@ -6,6 +6,7 @@ const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const YAML = require("yaml");
 const { createServer } = require("./server");
+const { readBrowserSnapshot } = require("./browserSnapshotCache");
 const { OPENUX_VERSION, isWithin, resolveProjectPath, validateProject } = require("./project");
 const validation = require("./validation");
 
@@ -27,12 +28,13 @@ function usage() {
     "  openux server start [--port <port>] [--project <directory>]",
     "  openux server status [--port <port>]",
     "  openux server selected [--port <port>]",
+    "  openux server annotations [clear] [--port <port>] [--screen <id>]",
     "  openux server update [--port <port>]",
     "  openux init [--project <directory>]",
     "  openux validate [--project <directory>]",
     "  openux version",
     "  openux schema [project|screen|asset|theme|spec|reference]",
-    "  openux render <screen> --format <html|image> [--state <id>] [--output <file>] [--project <directory>]",
+    "  openux render <screen> --format <html|image> [--state <id>] [--output <file>] [--annotations] [--project <directory>]",
     "  openux prune [--apply] [--project <directory>]"
   ].join("\n");
 }
@@ -51,6 +53,10 @@ function parseOptions(args, allowedFlags) {
       options.apply = true;
       continue;
     }
+    if (argument === "--annotations") {
+      options.annotations = true;
+      continue;
+    }
     const value = args[index + 1];
     if (!value || value.startsWith("--")) throw new Error(`Option "${argument}" requires a value.`);
     index += 1;
@@ -67,6 +73,8 @@ function parseOptions(args, allowedFlags) {
       options.format = value;
     } else if (argument === "--project") {
       options.project = value;
+    } else if (argument === "--screen") {
+      options.screen = value;
     } else if (argument === "--output") {
       options.output = value;
     } else if (argument === "--state") {
@@ -167,8 +175,37 @@ async function requestServer(port, pathname, options = {}) {
 async function runServerCommand(command, args) {
   const allowedFlags = command === "start"
     ? new Set(["--port", "--project"])
-    : new Set(["--port"]);
+    : command === "annotations"
+      ? new Set(["--port", "--screen"])
+      : new Set(["--port"]);
   const { positional, options } = parseOptions(args, allowedFlags);
+  if (command === "annotations") {
+    if (positional.length > 1 || (positional.length === 1 && positional[0] !== "clear")) {
+      throw new Error('Usage: openux server annotations [clear] [--port <port>] [--screen <id>]');
+    }
+    const port = resolveServerPort(options);
+    if (positional[0] === "clear") {
+      let screenId = options.screen;
+      if (!screenId) {
+        const selection = await requestServer(port, "/api/selection");
+        screenId = selection.selection?.screen?.id;
+      }
+      if (!screenId) throw new Error("No Screen is selected. Pass --screen <id> to clear its annotations.");
+      const result = await requestServer(
+        port,
+        `/api/annotations?screenId=${encodeURIComponent(screenId)}`,
+        { method: "DELETE" }
+      );
+      console.log(`Cleared annotations for Screen "${screenId}" (${result.cleared} set).`);
+      return;
+    }
+    const pathname = options.screen
+      ? `/api/annotations?screenId=${encodeURIComponent(options.screen)}`
+      : "/api/annotations";
+    const annotations = await requestServer(port, pathname);
+    console.log(JSON.stringify(annotations, null, 2));
+    return;
+  }
   if (positional.length) throw new Error(`Unexpected argument "${positional[0]}".`);
   if (command === "start") return startServer(options);
   const port = resolveServerPort(options);
@@ -424,14 +461,14 @@ function runBrowser(executable, args, timeoutMs) {
   });
 }
 
-function createBrowserArgs(url, temporaryDirectory, viewportHeight, screenshotPath) {
+function createBrowserArgs(url, temporaryDirectory, viewportWidth, viewportHeight, screenshotPath) {
   const args = [
     "--headless",
     "--disable-gpu",
     "--no-first-run",
     "--no-default-browser-check",
     "--hide-scrollbars",
-    `--window-size=1440,${viewportHeight}`,
+    `--window-size=${viewportWidth},${viewportHeight}`,
     "--virtual-time-budget=10000",
     `--user-data-dir=${path.join(temporaryDirectory, "profile")}`
   ];
@@ -492,10 +529,16 @@ async function closeServer(server) {
 async function runRenderCommand(args) {
   const { positional, options } = parseOptions(
     args,
-    new Set(["--format", "--output", "--project", "--state"])
+    new Set(["--annotations", "--format", "--output", "--port", "--project", "--state"])
   );
   if (positional.length !== 1 || !options.format) {
-    throw new Error("Usage: openux render <screen> --format <html|image> [--state <id>] [--output <file>] [--project <directory>]");
+    throw new Error("Usage: openux render <screen> --format <html|image> [--state <id>] [--output <file>] [--annotations] [--project <directory>]");
+  }
+  if (options.port !== undefined && !options.annotations) {
+    throw new Error('The "--port" option requires "--annotations".');
+  }
+  if (options.annotations && options.format !== "image") {
+    throw new Error('The "--annotations" option requires "--format image".');
   }
   if (options.format === "image" && !options.output) {
     throw new Error("Image rendering requires --output <file>.");
@@ -515,6 +558,32 @@ async function runRenderCommand(args) {
     throw new Error(
       `Unknown preview state "${options.state}" for Screen "${screen.id}". Available states: ${states.map((state) => state.id).join(", ")}.`
     );
+  }
+  if (options.annotations) {
+    if (options.port !== undefined) {
+      console.warn('The "--port" option is ignored for --annotations; the CLI reads the cached snapshot file directly.');
+    }
+    const snapshot = await readBrowserSnapshot(projectRoot);
+    if (!snapshot) {
+      throw new Error(
+        `No browser snapshot is cached for Screen "${screen.id}". Finish an annotation in the editor with that Screen selected, wait for the snapshot-cached status, and retry.`
+      );
+    }
+    if (snapshot.metadata.screenId !== screen.id) {
+      throw new Error(
+        `The cached browser snapshot is for Screen "${snapshot.metadata.screenId}", not "${screen.id}". Select that Screen and finish an annotation to refresh the snapshot.`
+      );
+    }
+    if (options.state !== undefined && snapshot.metadata.previewStateId !== options.state) {
+      throw new Error(
+        `The cached browser snapshot is for preview state "${snapshot.metadata.previewStateId}", not "${options.state}". Select that state and finish an annotation to refresh the snapshot.`
+      );
+    }
+    const outputPath = path.resolve(options.output);
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await fs.writeFile(outputPath, snapshot.image);
+    console.log(`Wrote cached browser snapshot for Screen "${screen.id}" to ${outputPath}`);
+    return 0;
   }
 
   const browser = findBrowserExecutable();
@@ -538,13 +607,14 @@ async function runRenderCommand(args) {
     if (options.state !== undefined) url.searchParams.set("state", options.state);
     const timeoutMs = Number(process.env.OPENUX_RENDER_TIMEOUT_MS) || 60000;
     let result;
+    let measurement;
     if (options.format === "image") {
-      const measureArgs = createBrowserArgs(url, temporaryDirectory, 1000);
+      const measureArgs = createBrowserArgs(url, temporaryDirectory, 1440, 1000);
       if (process.env.OPENUX_DEBUG_RENDER) {
         console.error(`Using browser: ${browser}`);
         console.error(`Browser arguments: ${measureArgs.join(" ")}`);
       }
-      const measurement = await runBrowser(browser, measureArgs, timeoutMs);
+      measurement = await runBrowser(browser, measureArgs, timeoutMs);
       if (measurement.status !== 0) throw browserFailure(measurement);
       const heightMatch = /data-openux-render-height="(\d+)"/.exec(measurement.stdout);
       const viewportHeight = heightMatch ? Number(heightMatch[1]) : 0;
@@ -555,13 +625,19 @@ async function runRenderCommand(args) {
             : "The browser could not measure the rendered Screen height."
         );
       }
-      const screenshotArgs = createBrowserArgs(url, temporaryDirectory, viewportHeight, outputPath);
+      const screenshotArgs = createBrowserArgs(
+        url,
+        temporaryDirectory,
+        1440,
+        viewportHeight,
+        outputPath
+      );
       if (process.env.OPENUX_DEBUG_RENDER) {
         console.error(`Browser arguments: ${screenshotArgs.join(" ")}`);
       }
       result = await runBrowser(browser, screenshotArgs, timeoutMs);
     } else {
-      const browserArgs = createBrowserArgs(url, temporaryDirectory, 1000);
+      const browserArgs = createBrowserArgs(url, temporaryDirectory, 1440, 1000);
       if (process.env.OPENUX_DEBUG_RENDER) {
         console.error(`Using browser: ${browser}`);
         console.error(`Browser arguments: ${browserArgs.join(" ")}`);
@@ -689,7 +765,7 @@ async function main(args = process.argv.slice(2)) {
   const [command, ...rest] = args;
   if (command === "server") {
     const [subcommand, ...subArgs] = rest;
-    if (!subcommand) throw new Error("Usage: openux server <start|status|selected|update>");
+    if (!subcommand) throw new Error("Usage: openux server <start|status|selected|annotations|update>");
     return runServerCommand(subcommand, subArgs);
   }
   if (command === "init") return runInitCommand(rest);

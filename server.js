@@ -4,9 +4,14 @@ const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const YAML = require("yaml");
 const validation = require("./validation");
+const { clearBrowserSnapshot, writeBrowserSnapshot } = require("./browserSnapshotCache");
 
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
+const MAX_CAPTURE_BYTES = 32 * 1024 * 1024;
 const MAX_FILES_PER_SAVE = 100;
+const MAX_ANNOTATIONS_PER_SCREEN = 200;
+const MAX_POINTS_PER_ANNOTATION = 2048;
+const ANNOTATION_TOOLS = new Set(["pen", "circle", "rectangle", "arrow", "highlight", "note"]);
 const CONTENT_TYPES = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
@@ -52,6 +57,81 @@ function sendJson(response, statusCode, body) {
   response.end(JSON.stringify(body));
 }
 
+function validateAnnotationSet(body) {
+  if (!body || Array.isArray(body) || typeof body !== "object" ||
+      typeof body.screenId !== "string" || !/^[a-z][a-z0-9-]*$/.test(body.screenId) ||
+      !Array.isArray(body.annotations) || body.annotations.length > MAX_ANNOTATIONS_PER_SCREEN) {
+    throw requestError("Annotations must include a valid screenId and an annotations list.");
+  }
+  let previewSize;
+  if (body.previewSize !== undefined) {
+    const { width, height } = body.previewSize || {};
+    if (!Number.isInteger(width) || width < 1 || width > 16384 ||
+        !Number.isInteger(height) || height < 1 || height > 16384) {
+      throw requestError("Annotation previewSize must include positive integer width and height values.");
+    }
+    previewSize = { width, height };
+  }
+  const ids = new Set();
+  const annotations = body.annotations.map((annotation) => {
+    if (!annotation || Array.isArray(annotation) || typeof annotation !== "object" ||
+        typeof annotation.id !== "string" || !annotation.id || annotation.id.length > 100 ||
+        ids.has(annotation.id) || !ANNOTATION_TOOLS.has(annotation.tool) ||
+        !Array.isArray(annotation.points) || !annotation.points.length ||
+        annotation.points.length > MAX_POINTS_PER_ANNOTATION) {
+      throw requestError("Each annotation must have a unique id, supported tool, and valid points.");
+    }
+    ids.add(annotation.id);
+    const points = annotation.points.map((point) => {
+      if (!point || Array.isArray(point) || typeof point !== "object" ||
+          !Number.isFinite(point.x) || !Number.isFinite(point.y) ||
+          point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1) {
+        throw requestError("Annotation points must use normalized x and y coordinates from 0 to 1.");
+      }
+      return { x: point.x, y: point.y };
+    });
+    const clean = {
+      id: annotation.id,
+      tool: annotation.tool,
+      points
+    };
+    if (annotation.text !== undefined) {
+      if (typeof annotation.text !== "string" || annotation.text.length > 500) {
+        throw requestError("Annotation text must be at most 500 characters.");
+      }
+      clean.text = annotation.text;
+    }
+    if (annotation.target !== undefined) {
+      const target = annotation.target;
+      if (!target || Array.isArray(target) || typeof target !== "object" ||
+          !Array.isArray(target.instancePath) ||
+          target.instancePath.some((part) =>
+            !(Number.isInteger(part) && part >= 0) &&
+            !(typeof part === "string" && /^[a-z][a-z0-9-]*$/.test(part))
+          )) {
+        throw requestError("Annotation targets must include a valid Element instancePath.");
+      }
+      if (target.text !== undefined &&
+          (typeof target.text !== "string" || target.text.length > 500)) {
+        throw requestError("Annotation target text must be at most 500 characters.");
+      }
+      clean.target = {
+        instancePath: target.instancePath,
+        ...(typeof target.elementId === "string" ? { elementId: target.elementId } : {}),
+        ...(typeof target.name === "string" ? { name: target.name } : {}),
+        ...(typeof target.assetId === "string" ? { assetId: target.assetId } : {}),
+        ...(target.text !== undefined ? { text: target.text } : {})
+      };
+    }
+    return clean;
+  });
+  return {
+    screenId: body.screenId,
+    annotations,
+    ...(previewSize ? { previewSize } : {})
+  };
+}
+
 async function listProjectFiles(projectRoot) {
   const realProjectRoot = await fs.realpath(projectRoot);
   const files = [];
@@ -91,6 +171,32 @@ async function readJsonBody(request) {
   } catch {
     throw requestError("Request body must be valid JSON.");
   }
+}
+
+async function readBinaryBody(request) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > MAX_CAPTURE_BYTES) {
+      throw requestError("Captured image exceeds the 32 MB limit.", 413);
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+function validateCapturedPng(image) {
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (image.length < 24 || !image.subarray(0, 8).equals(signature)) {
+    throw requestError("Browser capture must be a valid PNG image.");
+  }
+  const width = image.readUInt32BE(16);
+  const height = image.readUInt32BE(20);
+  if (width < 1 || height < 1 || width > 16384 || height > 16384) {
+    throw requestError("Captured image dimensions must be between 1 and 16384 pixels.");
+  }
+  return { width, height };
 }
 
 function isSpecPath(relativePath) {
@@ -589,6 +695,18 @@ async function serveStatic(rootDirectory, projectRoot, pathname, response) {
   let relativePath;
   let allowedRoot = rootDirectory;
   if (pathname === "/") relativePath = "index.html";
+  else if (pathname === "/vendor/html-to-image.js") {
+    const bundlePath = path.resolve(__dirname, "node_modules", "html-to-image", "dist", "html-to-image.js");
+    const content = await fs.readFile(bundlePath);
+    response.writeHead(200, {
+      "Content-Type": "text/javascript; charset=utf-8",
+      "Cache-Control": "no-store",
+      "Content-Length": content.length,
+      "X-Content-Type-Options": "nosniff"
+    });
+    response.end(content);
+    return;
+  }
   else if ([
     "/index.html",
     "/app.mjs",
@@ -606,6 +724,7 @@ async function serveStatic(rootDirectory, projectRoot, pathname, response) {
     "/browser/ProjectPersistence.mjs",
     "/browser/ResizablePanels.mjs",
     "/browser/PreviewStateController.mjs",
+    "/browser/ScreenAnnotationController.mjs",
     "/browser/ScreenYamlEditor.mjs",
     "/browser/ScreenInstanceRenderer.mjs",
     "/browser/ScreenElementController.mjs",
@@ -671,11 +790,28 @@ function createServer(options = {}) {
   const projectRoot = path.resolve(options.projectRoot || path.join(rootDirectory, "openux"));
   const eventClients = new Set();
   const selectionState = { selection: null, updatedAt: null };
+  const annotationsByScreen = new Map();
   let server;
+  function publishEvent(name, data) {
+    const message = `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const client of eventClients) client.write(message);
+  }
+  function annotationsFor(screenId) {
+    const entry = screenId ? annotationsByScreen.get(screenId) : null;
+    return {
+      screenId: screenId || null,
+      coordinateSpace: "normalized 0-1 coordinates relative to the Screen preview",
+      annotations: entry?.annotations || [],
+      ...(entry?.previewSize ? { previewSize: entry.previewSize } : {}),
+      updatedAt: entry?.updatedAt || null
+    };
+  }
   server = http.createServer(async (request, response) => {
     let pathname;
+    let requestUrl;
     try {
-      pathname = new URL(request.url, "http://localhost").pathname;
+      requestUrl = new URL(request.url, "http://localhost");
+      pathname = requestUrl.pathname;
       if (request.method === "GET") {
         if (pathname === "/api/status") {
           const address = server.address();
@@ -694,7 +830,17 @@ function createServer(options = {}) {
           return;
         }
         if (pathname === "/api/selection") {
-          sendJson(response, 200, selectionState);
+          const screenId = selectionState.selection?.screen?.id;
+          sendJson(response, 200, {
+            ...selectionState,
+            annotations: annotationsFor(screenId)
+          });
+          return;
+        }
+        if (pathname === "/api/annotations") {
+          const screenId = requestUrl.searchParams.get("screenId") ||
+            selectionState.selection?.screen?.id || null;
+          sendJson(response, 200, annotationsFor(screenId));
           return;
         }
         if (pathname === "/api/events") {
@@ -719,9 +865,91 @@ function createServer(options = {}) {
             (body.selection !== null && (Array.isArray(body.selection) || typeof body.selection !== "object"))) {
           throw requestError("Selection updates must contain an object or null.");
         }
+        await clearBrowserSnapshot(projectRoot);
         selectionState.selection = body.selection;
         selectionState.updatedAt = new Date().toISOString();
         sendJson(response, 200, { updated: true });
+        return;
+      }
+      if (request.method === "POST" && pathname === "/api/snapshots") {
+        const screenId = requestUrl.searchParams.get("screenId");
+        if (!screenId || !/^[a-z][a-z0-9-]*$/.test(screenId)) {
+          throw requestError("A valid Screen id is required to save a browser snapshot.");
+        }
+        const selection = selectionState.selection;
+        const annotations = annotationsByScreen.get(screenId);
+        if (selection?.view !== "screen" || selection.screen?.id !== screenId) {
+          throw requestError("The Screen must be selected before its browser snapshot can be saved.", 409);
+        }
+        if (request.headers["x-openux-selection-updated-at"] !== selectionState.updatedAt) {
+          throw requestError("The selected Screen preview changed before its snapshot could be saved.", 409);
+        }
+        if (!annotations?.updatedAt ||
+            request.headers["x-openux-annotation-updated-at"] !== annotations.updatedAt) {
+          throw requestError("The annotations changed before the browser snapshot could be saved.", 409);
+        }
+        const contentType = String(request.headers["content-type"] || "").toLowerCase();
+        if (!contentType.startsWith("image/png")) {
+          throw requestError("Browser snapshots must be PNG images.", 415);
+        }
+        const image = await readBinaryBody(request);
+        const previewSize = validateCapturedPng(image);
+        if (selection.previewSize &&
+            (selection.previewSize.width !== previewSize.width ||
+             selection.previewSize.height !== previewSize.height)) {
+          throw requestError("The browser snapshot dimensions do not match the selected preview.", 409);
+        }
+        await writeBrowserSnapshot(projectRoot, image, {
+          screenId,
+          selectionUpdatedAt: selectionState.updatedAt,
+          annotationUpdatedAt: annotations.updatedAt,
+          previewStateId: selection.previewStateId || "default",
+          previewSize,
+          capturedAt: new Date().toISOString()
+        });
+        sendJson(response, 200, { saved: true, previewSize });
+        return;
+      }
+      if (request.method === "POST" && pathname === "/api/annotations") {
+        const body = await readJsonBody(request);
+        const annotationSet = validateAnnotationSet(body);
+        await clearBrowserSnapshot(projectRoot);
+        const updatedAt = new Date().toISOString();
+        annotationsByScreen.set(annotationSet.screenId, {
+          annotations: annotationSet.annotations,
+          ...(annotationSet.previewSize ? { previewSize: annotationSet.previewSize } : {}),
+          updatedAt
+        });
+        publishEvent("annotations-updated", {
+          screenId: annotationSet.screenId,
+          updatedAt
+        });
+        sendJson(response, 200, {
+          screenId: annotationSet.screenId,
+          saved: annotationSet.annotations.length,
+          updatedAt
+        });
+        return;
+      }
+      if (request.method === "DELETE" && pathname === "/api/annotations") {
+        const screenId = requestUrl.searchParams.get("screenId");
+        if (screenId && !/^[a-z][a-z0-9-]*$/.test(screenId)) {
+          throw requestError("Invalid Screen id for clearing annotations.");
+        }
+        const clearedScreenIds = screenId
+          ? (annotationsByScreen.has(screenId) ? [screenId] : [])
+          : [...annotationsByScreen.keys()];
+        if (screenId) annotationsByScreen.delete(screenId);
+        else annotationsByScreen.clear();
+        publishEvent("annotations-updated", {
+          screenId: screenId || null,
+          cleared: true,
+          updatedAt: new Date().toISOString()
+        });
+        sendJson(response, 200, {
+          cleared: clearedScreenIds.length,
+          screenIds: clearedScreenIds
+        });
         return;
       }
       if (request.method === "POST" && pathname === "/api/update") {
@@ -738,8 +966,7 @@ function createServer(options = {}) {
           }
         }
         const timestamp = new Date().toISOString();
-        const message = `event: project-updated\ndata: ${JSON.stringify({ timestamp })}\n\n`;
-        for (const client of eventClients) client.write(message);
+        publishEvent("project-updated", { timestamp });
         sendJson(response, 200, { notifiedBrowsers: eventClients.size });
         return;
       }

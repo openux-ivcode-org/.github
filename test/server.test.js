@@ -1,11 +1,16 @@
 const assert = require("node:assert/strict");
+const { execFile } = require("node:child_process");
+const { promisify } = require("node:util");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const YAML = require("yaml");
 const { createServer } = require("../server");
+const { clearBrowserSnapshot, readBrowserSnapshot } = require("../browserSnapshotCache");
 const validation = require("../validation");
+const cliPath = path.join(__dirname, "..", "cli.js");
+const execFileAsync = promisify(execFile);
 
 function assetDocument(data, body) {
   return validation.formatAssetDocument(YAML.stringify(data), body);
@@ -62,6 +67,10 @@ async function withServer(run) {
     "export class ScreenElementController {}\n"
   );
   await fs.writeFile(
+    path.join(rootDirectory, "browser", "ScreenAnnotationController.mjs"),
+    "export class ScreenAnnotationController {}\n"
+  );
+  await fs.writeFile(
     path.join(rootDirectory, "browser", "ProjectFileTree.mjs"),
     "export class ProjectFileTree {}\n"
   );
@@ -108,6 +117,7 @@ async function withServer(run) {
     await new Promise((resolve, reject) =>
       server.close((error) => error ? reject(error) : resolve())
     );
+    await clearBrowserSnapshot(path.join(rootDirectory, "openux"));
     await fs.rm(rootDirectory, { recursive: true, force: true });
   }
 }
@@ -116,6 +126,7 @@ test("serves the editor root and the example project", async () => {
   await withServer(async ({ baseUrl }) => {
     const editor = await fetch(baseUrl);
     const appModule = await fetch(`${baseUrl}/app.mjs`);
+    const imageCaptureLibrary = await fetch(`${baseUrl}/vendor/html-to-image.js`);
     const stylesheet = await fetch(`${baseUrl}/styles.css`);
     const assetEditorModule = await fetch(`${baseUrl}/browser/AssetEditor.mjs`);
     const editorEventControllerModule = await fetch(`${baseUrl}/browser/EditorEventController.mjs`);
@@ -128,6 +139,7 @@ test("serves the editor root and the example project", async () => {
     const projectPersistenceModule = await fetch(`${baseUrl}/browser/ProjectPersistence.mjs`);
     const resizablePanelsModule = await fetch(`${baseUrl}/browser/ResizablePanels.mjs`);
     const previewStateControllerModule = await fetch(`${baseUrl}/browser/PreviewStateController.mjs`);
+    const screenAnnotationControllerModule = await fetch(`${baseUrl}/browser/ScreenAnnotationController.mjs`);
     const screenYamlEditorModule = await fetch(`${baseUrl}/browser/ScreenYamlEditor.mjs`);
     const screenInstanceRendererModule = await fetch(`${baseUrl}/browser/ScreenInstanceRenderer.mjs`);
     const screenElementControllerModule = await fetch(`${baseUrl}/browser/ScreenElementController.mjs`);
@@ -145,6 +157,8 @@ test("serves the editor root and the example project", async () => {
     assert.equal(stylesheet.headers.get("content-type"), "text/css; charset=utf-8");
     assert.equal(appModule.status, 200);
     assert.equal(appModule.headers.get("content-type"), "text/javascript; charset=utf-8");
+    assert.equal(imageCaptureLibrary.status, 200);
+    assert.match(await imageCaptureLibrary.text(), /htmlToImage/);
     assert.equal(assetEditorModule.status, 200);
     assert.equal(editorEventControllerModule.status, 200);
     assert.equal(browserModule.status, 200);
@@ -157,6 +171,7 @@ test("serves the editor root and the example project", async () => {
     assert.equal(projectPersistenceModule.status, 200);
     assert.equal(resizablePanelsModule.status, 200);
     assert.equal(previewStateControllerModule.status, 200);
+    assert.equal(screenAnnotationControllerModule.status, 200);
     assert.equal(screenYamlEditorModule.status, 200);
     assert.equal(screenInstanceRendererModule.status, 200);
     assert.equal(screenElementControllerModule.status, 200);
@@ -247,6 +262,156 @@ test("reports server status and browser selection and notifies connected browser
       body: "{}"
     });
     assert.equal(rejected.status, 403);
+  });
+});
+
+test("serves temporary Screen annotations to the CLI and clears them by Screen", async () => {
+  await withServer(async ({ baseUrl }) => {
+    const port = new URL(baseUrl).port;
+    const selection = {
+      view: "screen",
+      screen: { id: "home", name: "Home", file: "screens/home/screen.yml" }
+    };
+    await fetch(`${baseUrl}/api/selection`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ selection })
+    });
+    const annotation = {
+      id: "mark-1",
+      tool: "circle",
+      points: [{ x: 0.2, y: 0.3 }, { x: 0.4, y: 0.5 }],
+      target: {
+        instancePath: [0, "content", 1],
+        elementId: "account-summary",
+        name: "Account summary",
+        text: "Payroll deposit"
+      }
+    };
+    const previewSize = { width: 390, height: 844 };
+    const saved = await fetch(`${baseUrl}/api/annotations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ screenId: "home", annotations: [annotation], previewSize })
+    });
+    assert.equal(saved.status, 200);
+    assert.equal((await saved.json()).saved, 1);
+
+    const selected = await fetch(`${baseUrl}/api/selection`);
+    const selectedBody = await selected.json();
+    assert.deepEqual(selectedBody.annotations.annotations, [annotation]);
+    assert.deepEqual(selectedBody.annotations.previewSize, previewSize);
+
+    const invalid = await fetch(`${baseUrl}/api/annotations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        screenId: "home",
+        annotations: [{ ...annotation, points: [{ x: 2, y: 0 }] }]
+      })
+    });
+    assert.equal(invalid.status, 400);
+
+    const invalidTargetText = await fetch(`${baseUrl}/api/annotations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        screenId: "home",
+        annotations: [{
+          ...annotation,
+          target: { ...annotation.target, text: "x".repeat(501) }
+        }]
+      })
+    });
+    assert.equal(invalidTargetText.status, 400);
+
+    const invalidPreviewSize = await fetch(`${baseUrl}/api/annotations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        screenId: "home",
+        annotations: [annotation],
+        previewSize: { width: 0, height: 844 }
+      })
+    });
+    assert.equal(invalidPreviewSize.status, 400);
+
+    const cliList = await execFileAsync(process.execPath, [
+      cliPath, "server", "annotations", "--port", port
+    ], { encoding: "utf8" });
+    const cliListBody = JSON.parse(cliList.stdout);
+    assert.deepEqual(cliListBody.annotations, [annotation]);
+    assert.deepEqual(cliListBody.previewSize, previewSize);
+
+    const cliClear = await execFileAsync(process.execPath, [
+      cliPath, "server", "annotations", "clear", "--port", port
+    ], { encoding: "utf8" });
+    assert.match(cliClear.stdout, /Cleared annotations for Screen "home"/);
+
+    const afterClear = await fetch(`${baseUrl}/api/annotations?screenId=home`);
+    assert.deepEqual((await afterClear.json()).annotations, []);
+  });
+});
+
+test("writes a browser snapshot to the shared cache and invalidates it on annotation changes", async () => {
+  await withServer(async ({ baseUrl, rootDirectory }) => {
+    const selection = {
+      view: "screen",
+      screen: { id: "home" },
+      previewStateId: "default",
+      previewSize: { width: 1, height: 1 }
+    };
+    await fetch(`${baseUrl}/api/selection`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ selection })
+    });
+    await fetch(`${baseUrl}/api/annotations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ screenId: "home", annotations: [], previewSize: selection.previewSize })
+    });
+
+    const stateResponse = await fetch(`${baseUrl}/api/selection`);
+    const state = await stateResponse.json();
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+      "base64"
+    );
+    const saved = await fetch(`${baseUrl}/api/snapshots?screenId=home`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "image/png",
+        "X-OpenUX-Selection-Updated-At": state.updatedAt,
+        "X-OpenUX-Annotation-Updated-At": state.annotations.updatedAt
+      },
+      body: png
+    });
+    assert.equal(saved.status, 200);
+    assert.deepEqual(await saved.json(), { saved: true, previewSize: { width: 1, height: 1 } });
+
+    const cachedSnapshot = await readBrowserSnapshot(path.join(rootDirectory, "openux"));
+    assert.deepEqual(cachedSnapshot.image, png);
+    assert.equal(cachedSnapshot.metadata.screenId, "home");
+    assert.equal(cachedSnapshot.metadata.previewStateId, "default");
+
+    const replaced = await fetch(`${baseUrl}/api/snapshots?screenId=home`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "image/png",
+        "X-OpenUX-Selection-Updated-At": state.updatedAt,
+        "X-OpenUX-Annotation-Updated-At": state.annotations.updatedAt
+      },
+      body: png
+    });
+    assert.equal(replaced.status, 200);
+
+    await fetch(`${baseUrl}/api/annotations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ screenId: "home", annotations: [], previewSize: selection.previewSize })
+    });
+    assert.equal(await readBrowserSnapshot(path.join(rootDirectory, "openux")), null);
   });
 });
 

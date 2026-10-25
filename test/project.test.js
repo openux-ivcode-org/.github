@@ -6,6 +6,7 @@ const path = require("node:path");
 const test = require("node:test");
 const YAML = require("yaml");
 const { inlineProjectResources } = require("../cli");
+const { clearBrowserSnapshot, writeBrowserSnapshot } = require("../browserSnapshotCache");
 const { OPENUX_VERSION, validateProject } = require("../project");
 const validation = require("../validation");
 
@@ -246,6 +247,48 @@ test("CLI init creates a discoverable template Asset and an Element-based Screen
       "utf8"
     ));
   } finally {
+    await fs.rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("CLI renders an annotated image from the local snapshot without a running server", async () => {
+  const parent = await fs.mkdtemp(path.join(os.tmpdir(), "openux-snapshot-cli-test-"));
+  const projectRoot = path.join(parent, "openux");
+  try {
+    const initialized = spawnSync(process.execPath, [cliPath, "init", "--project", parent], {
+      encoding: "utf8"
+    });
+    assert.equal(initialized.status, 0, initialized.stderr || initialized.stdout);
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+      "base64"
+    );
+    await writeBrowserSnapshot(projectRoot, png, {
+      screenId: "home",
+      previewStateId: "default",
+      previewSize: { width: 1, height: 1 },
+      annotationUpdatedAt: "2026-10-25T12:00:00.000Z",
+      selectionUpdatedAt: "2026-10-25T11:59:00.000Z",
+      capturedAt: "2026-10-25T12:00:00.000Z"
+    });
+    const outputPath = path.join(parent, "home-annotated.png");
+    const rendered = spawnSync(process.execPath, [
+      cliPath,
+      "render",
+      "home",
+      "--format",
+      "image",
+      "--annotations",
+      "--project",
+      projectRoot,
+      "--output",
+      outputPath
+    ], { encoding: "utf8" });
+
+    assert.equal(rendered.status, 0, rendered.stderr || rendered.stdout);
+    assert.deepEqual(await fs.readFile(outputPath), png);
+  } finally {
+    await clearBrowserSnapshot(projectRoot);
     await fs.rm(parent, { recursive: true, force: true });
   }
 });

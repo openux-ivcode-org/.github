@@ -564,6 +564,37 @@
       gap: 8px;
     }
     .preview-state-controls[hidden] { display: none; }
+    .annotation-controls {
+      display: flex;
+      align-items: center;
+      flex: 0 1 auto;
+      min-width: 0;
+      gap: 5px;
+    }
+    .annotation-tool-select {
+      min-width: 84px;
+      padding: 7px 24px 7px 8px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      color: var(--ui-text-strong);
+      background: var(--panel);
+      font: inherit;
+      font-size: 11px;
+    }
+    .annotation-tool-select:focus-visible,
+    .annotation-controls button:focus-visible {
+      outline: 2px solid var(--studio-focus);
+      outline-offset: 2px;
+    }
+    .annotation-status {
+      max-width: 180px;
+      overflow: hidden;
+      color: var(--ui-status);
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .annotation-status.error { color: var(--ui-danger); }
     .preview-state-label {
       color: var(--ui-text-medium);
       font-size: 11px;
@@ -818,6 +849,45 @@
       color: var(--theme-ink, #1e293b);
       background: var(--theme-panel, #fff);
       box-shadow: none;
+    }
+    .screen-preview.annotation-mode { cursor: crosshair; }
+    .screen-annotation-overlay {
+      position: absolute;
+      z-index: 20;
+      inset: 0;
+      overflow: visible;
+      pointer-events: none;
+      touch-action: none;
+    }
+    .annotation-shape,
+    .annotation-pen {
+      fill: color-mix(in srgb, #e11d48 10%, transparent);
+      stroke: #e11d48;
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vector-effect: non-scaling-stroke;
+    }
+    .annotation-pen { fill: none; }
+    .annotation-highlight {
+      fill: none;
+      stroke: #facc15;
+      stroke-width: 22;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: .38;
+      vector-effect: non-scaling-stroke;
+    }
+    .annotation-arrow { fill: none; marker-end: url(#annotation-arrowhead); }
+    .annotation-note-bg {
+      fill: var(--panel);
+      stroke: #e11d48;
+      stroke-width: 2;
+      vector-effect: non-scaling-stroke;
+    }
+    .annotation-note-text {
+      fill: var(--ui-text-strong);
+      font: 12px Inter, "Segoe UI", Arial, sans-serif;
     }
 
     .screen-preview.loading, .screen-preview.error {

@@ -87,6 +87,32 @@
             <label class="preview-state-label" for="preview-state-select">Preview state</label>
             <select class="preview-state-select" id="preview-state-select"></select>
             <button class="preview-state-add" id="add-preview-state" type="button">Add state</button>
+            <div class="annotation-controls" role="group" aria-label="Screen annotations">
+              <button
+                class="preview-state-add"
+                id="annotation-mode-toggle"
+                type="button"
+                aria-pressed="false"
+                title="Draw temporary marks over the Screen preview"
+              >Annotate</button>
+              <select
+                class="annotation-tool-select"
+                id="annotation-tool-select"
+                aria-label="Annotation tool"
+                disabled
+              >
+                <option value="pen">Pen</option>
+                <option value="circle">Circle</option>
+                <option value="rectangle">Rectangle</option>
+                <option value="arrow">Arrow</option>
+                <option value="highlight">Highlighter</option>
+                <option value="note">Note</option>
+              </select>
+              <button class="preview-state-add" id="annotation-undo" type="button" disabled>Undo</button>
+              <button class="preview-state-add" id="annotation-redo" type="button" disabled>Redo</button>
+              <button class="preview-state-add" id="annotation-clear" type="button" disabled>Clear</button>
+              <span class="annotation-status" id="annotation-status" role="status" aria-live="polite"></span>
+            </div>
           </div>
           <div class="screen-view-selector" role="group" aria-label="Screen view">
             <button
@@ -169,6 +195,7 @@
       <button id="asset-delete-confirm" class="danger" type="button">Delete Asset</button>
     </div>
   </dialog>
+  <script src="./vendor/html-to-image.js"></script>
   <script type="module" src="./app.mjs"></script>
 </body>
 </html>

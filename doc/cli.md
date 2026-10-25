@@ -12,16 +12,23 @@ Run the commands as `openux ...` when the package's `bin` entry is available, or
 | --- | --- |
 | `openux server start [--port <port>] [--project <directory>]` | Start the local editor server in the foreground. The command blocks until interrupted. Defaults to port `3000` (or `OPENUX_PORT` / `PORT`) and binds to `127.0.0.1`. |
 | `openux server status [--port <port>]` | Check whether the editor server is reachable and print JSON with its URL, connected browser count, and selection availability. |
-| `openux server selected [--port <port>]` | Print JSON containing the current browser-editor selection and the time it was last updated. |
+| `openux server selected [--port <port>]` | Print JSON containing the current browser-editor selection, its Screen's temporary annotations, and the time it was last updated. |
+| `openux server annotations [clear] [--port <port>] [--screen <id>]` | Read temporary Screen annotations as JSON, or clear them for the selected Screen (or the Screen named by `--screen`). |
 | `openux server update [--port <port>]` | Notify connected browser tabs after project files have changed. Tabs without unsaved edits refresh; tabs with unsaved edits are left untouched and prompted to save or reset before refreshing. |
 | `openux init [--project <directory>]` | Create a starter project under `<directory>/openux` (defaults to the current directory). Refuses to overwrite any generated file that already exists. |
 | `openux validate [--project <directory>]` | Validate project resources, discovered Assets, local file references, and references between resources. |
 | `openux version` | Print the OpenUX format version supported by this CLI. `openux --version` is an alias. |
 | `openux schema [project\|screen\|asset\|theme\|spec\|reference]` | Print Markdown authoring guidance. Use `reference` for the version-matched authoring workflow; without a type, print all guidance. |
-| `openux render <screen> --format <html\|image> [--state <id>] [--output <file>] [--project <directory>]` | Render a Screen by ID, optionally using one of its named preview states, as HTML or a full-page image. |
+| `openux render <screen> --format <html\|image> [--state <id>] [--output <file>] [--annotations] [--project <directory>]` | Render a Screen by ID, optionally using a named preview state, as HTML or a PNG image. Image output can include temporary editor annotations. |
 | `openux prune [--apply] [--project <directory>]` | Report unreferenced files in discovered asset directories. No files are removed unless `--apply` is supplied. |
 
-`--port` selects the local server port for `server` commands. The status, selection, and update commands default to port `3000` or the `OPENUX_PORT` / `PORT` environment setting.
+`--port` selects the local server port for `server` commands. Server commands default to port `3000` or the `OPENUX_PORT` / `PORT` environment setting.
+
+## Temporary Screen annotations
+
+In the Screen preview, choose **Annotate**, select a drawing tool, and mark an area. Pen, circle, rectangle, arrow, highlighter, and note marks are available. Undo, redo, and Clear manage the current Screen's marks. Notes can carry short instructions; you can also describe marks in your AI conversation.
+
+Annotations are held in the running editor server's memory and are not saved to project files. `openux server selected` includes the selected Screen's marks and any associated Element paths. Use `openux server annotations [--screen <id>]` to inspect them, or `openux server annotations clear [--screen <id>]` to clear them. Without `--screen`, `clear` uses the Screen currently selected in the editor.
 
 ## Initialization
 
@@ -49,6 +56,12 @@ openux render home --format image --state add-item-open --output home-dialog.png
 
 `--state <id>` selects a Screen's `preview-states[].id` for either output format. If omitted, the `default` state is rendered. The command reports an error when the state ID is not defined on that Screen.
 
+Add `--annotations` to use a PNG snapshot of the browser-rendered Screen preview, including its temporary annotation overlay. After each annotation change, the editor sends a snapshot to the local server, which writes it to a project-keyed temporary file. The CLI reads that file directly; rendering does not contact the server. The editor invalidates the snapshot when its selected Screen preview changes, so finish an annotation with the desired Screen, state, and viewport active before rendering. If `--state` is supplied, it must match the snapshot's state. The editor tab may be minimized after the snapshot is saved. If there is no current snapshot, the CLI reports that immediately rather than waiting for the browser:
+
+```sh
+openux render home --format image --annotations --output home-annotated.png
+```
+
 ## Pruning
 
 Pruning is non-destructive by default: `openux prune` reports unreferenced files without removing them. Applying the cleanup requires `--apply`. An Asset is a candidate when no Screen Element or local template resource references it. Applying prune removes only the candidate files; there is no Asset registry to update in `project.yml`. A project-level behavior spec is for requirements shared across Screens or throughout the project; Screen-level specs describe page behavior and state activation, while Element specs cover behavior specific to placed Elements.
@@ -56,7 +69,7 @@ Pruning is non-destructive by default: `openux prune` reports unreferenced files
 ## Intended workflow
 
 1. Start the editor with `openux server start` and check it with `openux server status`.
-2. Use `openux server selected` to get context about the item selected in the browser editor.
+2. Use `openux server selected` to get context about the item selected in the browser editor and any annotations on its Screen. Target text can identify a specific item inside an Asset; `openux render <screen> --format image --annotations` captures a full Screen image with the marks overlaid.
 3. Read the version-matched authoring workflow with `openux schema reference`, then consult `openux schema [type]` for an artifact's format details.
 4. Edit project files directly.
 5. Run `openux validate` to catch malformed files and project-level issues.

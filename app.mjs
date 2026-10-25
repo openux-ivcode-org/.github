@@ -12,6 +12,7 @@ import { ProjectPersistence } from "./browser/ProjectPersistence.mjs";
 import { ProjectRepository } from "./browser/ProjectRepository.mjs";
 import { PreviewStateController } from "./browser/PreviewStateController.mjs";
 import { ScreenElementController } from "./browser/ScreenElementController.mjs";
+import { ScreenAnnotationController } from "./browser/ScreenAnnotationController.mjs";
 import { ScreenYamlEditor } from "./browser/ScreenYamlEditor.mjs";
 import { ScreenInstanceRenderer } from "./browser/ScreenInstanceRenderer.mjs";
 import { SpecEditor } from "./browser/SpecEditor.mjs";
@@ -545,9 +546,45 @@ const workspaceViewRenderer = new WorkspaceViewRenderer({
     getTemplateByPath,
     renderInspector,
     setPreviewMessage,
-    hidePreviewStateControls
+    hidePreviewStateControls,
+    onPreviewResize: publishSelection
   }
 });
+const screenAnnotationController = new ScreenAnnotationController({
+  state: {},
+  services: {
+    byId,
+    document,
+    window,
+    fetcher: (url, options) => fetch(url, options),
+    prompt: (message, value) => window.prompt(message, value),
+    capturePreview: async () => {
+      const preview = byId("screen-preview");
+      const width = Math.ceil(preview.clientWidth);
+      const height = Math.ceil(Math.max(preview.clientHeight, preview.scrollHeight));
+      if (!width || !height) throw new Error("The Screen preview has no visible dimensions.");
+      if (!window.htmlToImage?.toBlob) throw new Error("The browser image capture library is unavailable.");
+      await document.fonts?.ready;
+      const image = await window.htmlToImage.toBlob(preview, {
+        width,
+        height,
+        canvasWidth: width,
+        canvasHeight: height,
+        pixelRatio: 1,
+        backgroundColor: window.getComputedStyle(preview).backgroundColor,
+        style: {
+          width: `${width}px`,
+          height: `${height}px`,
+          overflow: "visible",
+          contain: "none"
+        }
+      });
+      if (!image) throw new Error("The browser could not create a PNG from the Screen preview.");
+      return image;
+    }
+  }
+});
+if (!isRenderOnly) screenAnnotationController.bind();
 const inspectorRenderer = new InspectorRenderer({
   state: {
     get project() { return project; },
@@ -652,6 +689,7 @@ function syncScreenViewMode() {
 
 async function setScreenViewMode(mode) {
   screenYamlEditor.setViewMode(mode);
+  if (mode === "yaml") screenAnnotationController?.setEnabled(false);
 }
 
 async function prepareScreenYamlSource(screen) {
@@ -831,11 +869,13 @@ async function loadProject(selectionToRestore = null) {
       if (byId("screen-preview").classList.contains("error")) {
         throw new Error(byId("screen-preview").textContent.trim() || "Screen render failed.");
       }
-      document.body.dataset.openuxRenderHeight = String(Math.ceil(Math.max(
-        document.documentElement.scrollHeight,
-        document.body.scrollHeight,
-        byId("screen-preview").scrollHeight
-      )));
+      if (!document.body.dataset.openuxRenderHeight) {
+        document.body.dataset.openuxRenderHeight = String(Math.ceil(Math.max(
+          document.documentElement.scrollHeight,
+          document.body.scrollHeight,
+          byId("screen-preview").scrollHeight
+        )));
+      }
       document.body.dataset.openuxRenderReady = "true";
       if (new URLSearchParams(window.location.search).get("format") === "html") {
         document.body.dataset.openuxRenderHtml = encodeBase64(await standaloneScreenHtml());
@@ -1148,10 +1188,15 @@ function showAddAssetError(error) {
 }
 
 async function renderScreen(index, options = {}) {
-  return workspaceViewRenderer.renderScreen(index, options);
+  await workspaceViewRenderer.renderScreen(index, options);
+  if (!isRenderOnly) {
+    await screenAnnotationController.setScreen(screens[index]);
+    publishSelection();
+  }
 }
 
 async function renderSpecEditor(filePath, instancePath = activeInstancePath, owner = "instance") {
+  screenAnnotationController?.setEnabled(false);
   return specEditor.render(filePath, instancePath, owner);
 }
 
@@ -1171,10 +1216,12 @@ async function createSpecForScreen() {
   return specEditor.createForScreen();
 }
 function renderProjectOverview() {
+  screenAnnotationController?.setEnabled(false);
   return workspaceViewRenderer.renderProjectOverview();
 }
 
 async function renderAssetTemplate(assetId, filePath = null) {
+  screenAnnotationController?.setEnabled(false);
   return assetEditor.renderTemplate(assetId, filePath);
 }
 
@@ -1283,10 +1330,24 @@ function updateNavigationSelection() {
 
 function publishSelection() {
   if (isRenderOnly) return;
+  const selection = currentUiSelection();
+  const preview = byId("screen-preview");
+  const previewWidth = preview?.clientWidth || 0;
+  const screenId = selection?.screen?.id;
+  const publishedSelection = selection?.view === "screen" && previewWidth > 0
+    ? {
+        ...selection,
+        previewStateId: activePreviewStateIds.get(screenId) || "default",
+        previewSize: {
+          width: Math.ceil(previewWidth),
+          height: Math.ceil(Math.max(preview.clientHeight, preview.scrollHeight))
+        }
+      }
+    : selection;
   fetch("/api/selection", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ selection: currentUiSelection() })
+    body: JSON.stringify({ selection: publishedSelection })
   }).catch((error) => console.warn("Could not publish the current OpenUX selection.", error));
 }
 
@@ -1448,6 +1509,7 @@ const editorEventController = new EditorEventController({
 editorEventController.bind();
 
 function renderThemeView(filePath = project?.theme) {
+  screenAnnotationController?.setEnabled(false);
   themeEditor.render(filePath);
 }
 
