@@ -158,6 +158,8 @@ function stripYamlComment(text) {
   return text;
 }
 
+globalThis.OpenuxYamlParser = parseOpenuxYaml;
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = parseOpenuxYaml;
 }

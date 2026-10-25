@@ -11,6 +11,7 @@ const CONTENT_TYPES = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
   [".js", "text/javascript; charset=utf-8"],
+  [".mjs", "text/javascript; charset=utf-8"],
   [".json", "application/json; charset=utf-8"],
   [".avif", "image/avif"],
   [".bmp", "image/bmp"],
@@ -588,8 +589,31 @@ async function serveStatic(rootDirectory, projectRoot, pathname, response) {
   let relativePath;
   let allowedRoot = rootDirectory;
   if (pathname === "/") relativePath = "index.html";
-  else if (pathname === "/index.html" || pathname === "/app.js" ||
-      pathname === "/yaml.js" || pathname === "/validation.js") {
+  else if ([
+    "/index.html",
+    "/app.mjs",
+    "/browser/AssetEditor.mjs",
+    "/browser/EditorEventController.mjs",
+    "/yaml.js",
+    "/validation.js",
+    "/styles.css",
+    "/browser/BrowserHistory.mjs",
+    "/browser/EditorNavigation.mjs",
+    "/browser/InspectorRenderer.mjs",
+    "/browser/ProjectRepository.mjs",
+    "/browser/ProjectFileNavigator.mjs",
+    "/browser/ProjectFileTree.mjs",
+    "/browser/ProjectPersistence.mjs",
+    "/browser/ResizablePanels.mjs",
+    "/browser/PreviewStateController.mjs",
+    "/browser/ScreenYamlEditor.mjs",
+    "/browser/ScreenInstanceRenderer.mjs",
+    "/browser/ScreenElementController.mjs",
+    "/browser/SpecEditor.mjs",
+    "/browser/ThemeEditor.mjs",
+    "/browser/TemplateMarkupRenderer.mjs",
+    "/browser/WorkspaceViewRenderer.mjs"
+  ].includes(pathname)) {
     relativePath = pathname.slice(1);
   } else if (pathname.startsWith("/openux/")) {
     let projectPath;

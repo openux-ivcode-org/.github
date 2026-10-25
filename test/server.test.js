@@ -16,8 +16,79 @@ async function withServer(run) {
   await fs.mkdir(path.join(rootDirectory, "openux"), { recursive: true });
   await fs.mkdir(path.join(rootDirectory, "openux", "screens"), { recursive: true });
   await fs.mkdir(path.join(rootDirectory, "openux", "assets"), { recursive: true });
+  await fs.mkdir(path.join(rootDirectory, "browser"), { recursive: true });
   await fs.writeFile(path.join(rootDirectory, "index.html"), "<h1>Editor</h1>");
-  await fs.writeFile(path.join(rootDirectory, "app.js"), "window.editor = true;");
+  await fs.writeFile(path.join(rootDirectory, "app.mjs"), "window.editor = true;");
+  await fs.writeFile(path.join(rootDirectory, "styles.css"), "body { color: black; }\n");
+  await fs.writeFile(
+    path.join(rootDirectory, "browser", "AssetEditor.mjs"),
+    "export class AssetEditor {}\n"
+  );
+  await fs.writeFile(
+    path.join(rootDirectory, "browser", "EditorEventController.mjs"),
+    "export class EditorEventController {}\n"
+  );
+  await fs.writeFile(path.join(rootDirectory, "browser", "BrowserHistory.mjs"), "export class BrowserHistory {}\n");
+  await fs.writeFile(
+    path.join(rootDirectory, "browser", "EditorNavigation.mjs"),
+    "export class EditorNavigation {}\n"
+  );
+  await fs.writeFile(
+    path.join(rootDirectory, "browser", "ProjectFileNavigator.mjs"),
+    "export class ProjectFileNavigator {}\n"
+  );
+  await fs.writeFile(
+    path.join(rootDirectory, "browser", "ResizablePanels.mjs"),
+    "export class ResizablePanels {}\n"
+  );
+  await fs.writeFile(
+    path.join(rootDirectory, "browser", "InspectorRenderer.mjs"),
+    "export class InspectorRenderer {}\n"
+  );
+  await fs.writeFile(
+    path.join(rootDirectory, "browser", "TemplateMarkupRenderer.mjs"),
+    "export class TemplateMarkupRenderer {}\n"
+  );
+  await fs.writeFile(
+    path.join(rootDirectory, "browser", "ScreenYamlEditor.mjs"),
+    "export class ScreenYamlEditor {}\n"
+  );
+  await fs.writeFile(
+    path.join(rootDirectory, "browser", "ScreenInstanceRenderer.mjs"),
+    "export class ScreenInstanceRenderer {}\n"
+  );
+  await fs.writeFile(
+    path.join(rootDirectory, "browser", "ScreenElementController.mjs"),
+    "export class ScreenElementController {}\n"
+  );
+  await fs.writeFile(
+    path.join(rootDirectory, "browser", "ProjectFileTree.mjs"),
+    "export class ProjectFileTree {}\n"
+  );
+  await fs.writeFile(
+    path.join(rootDirectory, "browser", "ProjectPersistence.mjs"),
+    "export class ProjectPersistence {}\n"
+  );
+  await fs.writeFile(
+    path.join(rootDirectory, "browser", "PreviewStateController.mjs"),
+    "export class PreviewStateController {}\n"
+  );
+  await fs.writeFile(
+    path.join(rootDirectory, "browser", "ProjectRepository.mjs"),
+    "export class ProjectRepository {}\n"
+  );
+  await fs.writeFile(
+    path.join(rootDirectory, "browser", "SpecEditor.mjs"),
+    "export class SpecEditor {}\n"
+  );
+  await fs.writeFile(
+    path.join(rootDirectory, "browser", "ThemeEditor.mjs"),
+    "export class ThemeEditor {}\n"
+  );
+  await fs.writeFile(
+    path.join(rootDirectory, "browser", "WorkspaceViewRenderer.mjs"),
+    "export class WorkspaceViewRenderer {}\n"
+  );
   await fs.writeFile(path.join(rootDirectory, "openux", "project.yml"), "name: Example\n");
   await fs.writeFile(path.join(rootDirectory, "openux", "screen.yml"), "name: Before\n");
   await fs.writeFile(
@@ -44,12 +115,55 @@ async function withServer(run) {
 test("serves the editor root and the example project", async () => {
   await withServer(async ({ baseUrl }) => {
     const editor = await fetch(baseUrl);
+    const appModule = await fetch(`${baseUrl}/app.mjs`);
+    const stylesheet = await fetch(`${baseUrl}/styles.css`);
+    const assetEditorModule = await fetch(`${baseUrl}/browser/AssetEditor.mjs`);
+    const editorEventControllerModule = await fetch(`${baseUrl}/browser/EditorEventController.mjs`);
+    const browserModule = await fetch(`${baseUrl}/browser/BrowserHistory.mjs`);
+    const editorNavigationModule = await fetch(`${baseUrl}/browser/EditorNavigation.mjs`);
+    const inspectorRendererModule = await fetch(`${baseUrl}/browser/InspectorRenderer.mjs`);
+    const projectRepositoryModule = await fetch(`${baseUrl}/browser/ProjectRepository.mjs`);
+    const projectFileNavigatorModule = await fetch(`${baseUrl}/browser/ProjectFileNavigator.mjs`);
+    const projectFileTreeModule = await fetch(`${baseUrl}/browser/ProjectFileTree.mjs`);
+    const projectPersistenceModule = await fetch(`${baseUrl}/browser/ProjectPersistence.mjs`);
+    const resizablePanelsModule = await fetch(`${baseUrl}/browser/ResizablePanels.mjs`);
+    const previewStateControllerModule = await fetch(`${baseUrl}/browser/PreviewStateController.mjs`);
+    const screenYamlEditorModule = await fetch(`${baseUrl}/browser/ScreenYamlEditor.mjs`);
+    const screenInstanceRendererModule = await fetch(`${baseUrl}/browser/ScreenInstanceRenderer.mjs`);
+    const screenElementControllerModule = await fetch(`${baseUrl}/browser/ScreenElementController.mjs`);
+    const specEditorModule = await fetch(`${baseUrl}/browser/SpecEditor.mjs`);
+    const themeEditorModule = await fetch(`${baseUrl}/browser/ThemeEditor.mjs`);
+    const workspaceViewRendererModule = await fetch(`${baseUrl}/browser/WorkspaceViewRenderer.mjs`);
+    const templateMarkupRendererModule = await fetch(`${baseUrl}/browser/TemplateMarkupRenderer.mjs`);
     const project = await fetch(`${baseUrl}/openux/project.yml`);
     const encodedResource = await fetch(`${baseUrl}/openux/assets/preview%20image.png`);
     const template = await fetch(`${baseUrl}/openux/assets/demo.stml`);
     const traversal = await fetch(`${baseUrl}/openux/%2e%2e%2findex.html`);
     assert.equal(editor.status, 200);
     assert.match(await editor.text(), /Editor/);
+    assert.equal(stylesheet.status, 200);
+    assert.equal(stylesheet.headers.get("content-type"), "text/css; charset=utf-8");
+    assert.equal(appModule.status, 200);
+    assert.equal(appModule.headers.get("content-type"), "text/javascript; charset=utf-8");
+    assert.equal(assetEditorModule.status, 200);
+    assert.equal(editorEventControllerModule.status, 200);
+    assert.equal(browserModule.status, 200);
+    assert.equal(editorNavigationModule.status, 200);
+    assert.equal(inspectorRendererModule.status, 200);
+    assert.equal(browserModule.headers.get("content-type"), "text/javascript; charset=utf-8");
+    assert.equal(projectRepositoryModule.status, 200);
+    assert.equal(projectFileNavigatorModule.status, 200);
+    assert.equal(projectFileTreeModule.status, 200);
+    assert.equal(projectPersistenceModule.status, 200);
+    assert.equal(resizablePanelsModule.status, 200);
+    assert.equal(previewStateControllerModule.status, 200);
+    assert.equal(screenYamlEditorModule.status, 200);
+    assert.equal(screenInstanceRendererModule.status, 200);
+    assert.equal(screenElementControllerModule.status, 200);
+    assert.equal(specEditorModule.status, 200);
+    assert.equal(themeEditorModule.status, 200);
+    assert.equal(workspaceViewRendererModule.status, 200);
+    assert.equal(templateMarkupRendererModule.status, 200);
     assert.equal(project.status, 200);
     assert.deepEqual(YAML.parse(await project.text()), { name: "Example" });
     assert.equal(encodedResource.status, 200);
