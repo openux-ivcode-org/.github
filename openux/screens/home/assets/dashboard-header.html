@@ -1,0 +1,73 @@
+---
+id: dashboard-header
+name: Dashboard Header
+description: A branded header with a search affordance and account profile.
+category: Dashboards/Components
+---
+<style>
+  .openux-dashboard-brand {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 11px;
+    color: var(--theme-ink, #18243a);
+    font-size: 15px;
+    font-weight: 750;
+    white-space: nowrap;
+  }
+  .openux-dashboard-brand-mark {
+    display: grid;
+    width: 34px;
+    height: 34px;
+    place-items: center;
+    border-radius: 10px;
+    color: var(--theme-on-primary, #fff);
+    background: var(--theme-primary, #4569e8);
+    font-size: 15px;
+  }
+  .openux-dashboard-search {
+    width: min(250px, 26vw);
+    min-width: 0;
+    margin-left: auto;
+    padding: 9px 13px;
+    border: 1px solid var(--theme-border, #e1e7ef);
+    border-radius: 8px;
+    color: var(--theme-muted, #8a95a7);
+    background: var(--theme-surface-muted, #f8f9fc);
+    font-size: 12px;
+  }
+  .openux-dashboard-profile {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-left: 20px;
+    color: var(--theme-ink, #18243a);
+    font-size: 12px;
+    font-weight: 650;
+  }
+  .openux-dashboard-header-inner {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+  }
+  .openux-dashboard-avatar {
+    display: grid;
+    width: 34px;
+    height: 34px;
+    place-items: center;
+    border-radius: 50%;
+    color: var(--theme-primary, #3752b5);
+    background: color-mix(in srgb, var(--theme-primary, #4569e8) 14%, var(--theme-surface, #fff));
+    font-weight: 750;
+  }
+  @media (max-width: 520px) {
+    .openux-dashboard-search { display: none; }
+    .openux-dashboard-profile { margin-left: auto; }
+  }
+</style>
+<div class="openux-dashboard-header-inner">
+  <div class="openux-dashboard-brand"><span class="openux-dashboard-brand-mark">A</span> Acme Finance</div>
+  <div class="openux-dashboard-search">Search transactions, accounts, help...</div>
+  <div class="openux-dashboard-profile"><span class="openux-dashboard-avatar">JD</span><span>Jordan Davis</span></div>
+</div>

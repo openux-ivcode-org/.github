@@ -1,7 +1,0 @@
-id: dashboard-activity
-name: Recent Activity
-description: A recent transaction list with merchant, date, account, and amount.
-category: Dashboards/Components
-render:
-  type: html-reference
-  source: asset.html

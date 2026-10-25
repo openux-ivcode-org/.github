@@ -1,0 +1,44 @@
+---
+id: sign-in-options-visual
+name: Sign-in Options Preview
+description: A static reminder and recovery-link row; neither item is interactive.
+category: Forms/Sign-in
+attributes:
+  remember-label:
+    type: string
+    default: Remember this device
+    overridable: true
+  recovery-label:
+    type: string
+    default: Forgot password?
+    overridable: true
+---
+<style>
+  .openux-sign-in-options {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 17px;
+    color: var(--theme-muted, #566278);
+    font: 10px/1.5 Inter, "Segoe UI", Arial, sans-serif;
+  }
+  .openux-sign-in-options__remember { display: flex; align-items: center; gap: 8px; }
+  .openux-sign-in-options__check {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 14px;
+    border: 1px solid var(--theme-border, #dfe4ed);
+    border-radius: 4px;
+    background: var(--theme-surface, #fff);
+  }
+  .openux-sign-in-options__recovery {
+    color: var(--theme-primary, #4569e8);
+    font-weight: 650;
+    text-align: right;
+  }
+</style>
+<div class="openux-sign-in-options">
+  <span class="openux-sign-in-options__remember"><span class="openux-sign-in-options__check" aria-hidden="true"></span>${attributes.remember-label}</span>
+  <span class="openux-sign-in-options__recovery">${attributes.recovery-label}</span>
+</div>

@@ -1,7 +1,0 @@
-id: dashboard-insights
-name: Account Insights
-description: Savings goal progress and a helpful account insight.
-category: Dashboards/Components
-render:
-  type: html-reference
-  source: asset.html

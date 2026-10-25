@@ -1,7 +1,0 @@
-id: dashboard-navigation
-name: Dashboard Navigation
-description: A compact side navigation menu with an active overview destination.
-category: Dashboards/Components
-render:
-  type: html-reference
-  source: asset.html

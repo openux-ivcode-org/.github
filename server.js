@@ -50,6 +50,30 @@ function sendJson(response, statusCode, body) {
   response.end(JSON.stringify(body));
 }
 
+async function listProjectFiles(projectRoot) {
+  const realProjectRoot = await fs.realpath(projectRoot);
+  const files = [];
+
+  async function visit(directory, relativeDirectory) {
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) continue;
+      const relativePath = relativeDirectory
+        ? `${relativeDirectory}/${entry.name}`
+        : entry.name;
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await visit(entryPath, relativePath);
+      } else if (entry.isFile()) {
+        files.push(relativePath);
+      }
+    }
+  }
+
+  await visit(realProjectRoot, "");
+  return files.sort((left, right) => left.localeCompare(right));
+}
+
 async function readJsonBody(request) {
   const chunks = [];
   let size = 0;
@@ -65,6 +89,52 @@ async function readJsonBody(request) {
   } catch {
     throw requestError("Request body must be valid JSON.");
   }
+}
+
+function isSpecPath(relativePath) {
+  try {
+    validation.validateSpecPath(relativePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isScreenFilePath(relativePath) {
+  return /^screens\/[a-z][a-z0-9-]*\/screen\.yml$/.test(relativePath);
+}
+
+function isAssetTemplateBaseDirectoryPath(relativePath) {
+  return relativePath === "assets" ||
+    /^screens\/[a-z][a-z0-9-]*\/assets$/.test(relativePath);
+}
+
+function isAssetTemplateHtmlPath(relativePath) {
+  return /^(?:assets|screens\/[a-z][a-z0-9-]*\/assets)\/[a-z][a-z0-9-]*\.html$/
+    .test(relativePath);
+}
+
+async function resolveProjectDirectory(projectRoot, relativePath, { create = false } = {}) {
+  const realProjectRoot = await fs.realpath(projectRoot);
+  let current = realProjectRoot;
+  for (const segment of relativePath.split("/")) {
+    current = path.join(current, segment);
+    let details;
+    try {
+      details = await fs.lstat(current);
+    } catch (error) {
+      if (error.code !== "ENOENT" || !create) throw error;
+      await fs.mkdir(current);
+      details = await fs.lstat(current);
+    }
+    if (details.isSymbolicLink() || !details.isDirectory()) {
+      throw requestError("Project directories must be real directories inside the openux project.");
+    }
+  }
+  if (!isWithin(realProjectRoot, current)) {
+    throw requestError("Project directory resolves outside the openux project.");
+  }
+  return current;
 }
 
 function parseYamlMapping(source) {
@@ -89,13 +159,12 @@ async function resolveProjectFile(projectRoot, relativePath, { create = false, s
     throw requestError("Save paths must be relative paths inside the openux project.");
   }
   const extension = path.extname(relativePath).toLowerCase();
-  const isSpecPath = /^specs\/[a-z0-9]+(?:-[a-z0-9]+)*\.md$/.test(relativePath);
-  if (![".yml", ".yaml", ".html"].includes(extension) && !(extension === ".md" && isSpecPath)) {
+  const specPath = isSpecPath(relativePath);
+  if (![".yml", ".yaml", ".html"].includes(extension) && !(extension === ".md" && specPath)) {
     throw requestError("The editor can only save project YAML, asset HTML, and behavior spec Markdown files.");
   }
-  if (extension === ".html" &&
-      (!relativePath.startsWith("assets/") || relativePath.split("/").length < 3)) {
-    throw requestError("HTML saves are only allowed inside asset directories.");
+  if (extension === ".html" && !isAssetTemplateHtmlPath(relativePath)) {
+    throw requestError("HTML saves are only allowed as named files inside assets directories.");
   }
 
   const target = path.resolve(projectRoot, ...relativePath.split("/"));
@@ -104,18 +173,12 @@ async function resolveProjectFile(projectRoot, relativePath, { create = false, s
   }
 
   if (create) {
-    const isScreenFile = /^screens\/[a-z0-9]+(?:-[a-z0-9]+)*\.ya?ml$/.test(relativePath);
-    if (!isScreenFile && !isSpecPath) {
+    const screenFile = isScreenFilePath(relativePath);
+    if (!screenFile && !specPath) {
       throw requestError("New files can only be created as named Screen YAML or behavior spec Markdown files.", 400);
     }
-    const realProjectRoot = await fs.realpath(projectRoot);
-    const directoryName = isScreenFile ? "screens" : "specs";
-    const targetDirectory = path.join(projectRoot, directoryName);
-    if (isSpecPath) await fs.mkdir(targetDirectory, { recursive: true });
-    const realTargetDirectory = await fs.realpath(targetDirectory);
-    if (realTargetDirectory !== path.join(realProjectRoot, directoryName)) {
-      throw requestError(`New files must be created inside the project ${directoryName} directory.`);
-    }
+    const relativeDirectory = path.posix.dirname(relativePath);
+    const realTargetDirectory = await resolveProjectDirectory(projectRoot, relativeDirectory, { create: true });
     const newTarget = path.join(realTargetDirectory, path.basename(relativePath));
     try {
       await fs.lstat(newTarget);
@@ -126,26 +189,23 @@ async function resolveProjectFile(projectRoot, relativePath, { create = false, s
     return newTarget;
   }
 
-  const stagedCopy = stagedCopies.find((copy) =>
-    relativePath.startsWith(`${copy.targetDirectory}/`)
-  );
+  const stagedCopy = stagedCopies.find((copy) => relativePath === copy.targetFile);
   if (stagedCopy) {
-    const copyRelativePath = relativePath.slice(stagedCopy.targetDirectory.length + 1);
-    const stagedTarget = path.resolve(stagedCopy.stagedDirectory, ...copyRelativePath.split("/"));
+    const stagedTarget = stagedCopy.stagedFile;
     if (!isWithin(stagedCopy.stagedDirectory, stagedTarget)) {
-      throw requestError("Save path resolves outside the copied asset directory.");
+      throw requestError("Save path resolves outside the copied Asset template.");
     }
     let realTarget;
     try {
       realTarget = await fs.realpath(stagedTarget);
     } catch (error) {
       if (error.code === "ENOENT") {
-        throw requestError(`Project file "${relativePath}" does not exist in the copied asset.`);
+        throw requestError(`Project file "${relativePath}" does not exist in the copied Asset template.`);
       }
       throw error;
     }
     if (!isWithin(stagedCopy.stagedDirectory, realTarget)) {
-      throw requestError("Save path resolves outside the copied asset directory.");
+      throw requestError("Save path resolves outside the copied Asset template.");
     }
     if (!(await fs.stat(realTarget)).isFile()) {
       throw requestError(`Project path "${relativePath}" is not a file.`);
@@ -170,77 +230,82 @@ async function resolveProjectFile(projectRoot, relativePath, { create = false, s
   return realTarget;
 }
 
-function validateAssetDirectoryPath(relativePath) {
-  if (typeof relativePath !== "string" || !relativePath.startsWith("assets/") ||
+function validateAssetTemplateBaseDirectoryPath(relativePath) {
+  if (typeof relativePath !== "string" || !isAssetTemplateBaseDirectoryPath(relativePath) ||
       relativePath.includes("\\") || relativePath.includes("\0") ||
       relativePath.split("/").some((segment) =>
         !segment || segment === "." || segment === ".." || segment.startsWith(".")
       )) {
-    throw requestError("Asset copies must use normal relative directories under assets/.");
+    throw requestError("Asset copies must use canonical assets directories.");
   }
 }
 
-async function resolveAssetDirectory(projectRoot, relativePath) {
-  validateAssetDirectoryPath(relativePath);
-  const realProjectRoot = await fs.realpath(projectRoot);
-  const assetsPath = path.join(realProjectRoot, "assets");
-  let assetsDetails;
-  try {
-    assetsDetails = await fs.lstat(assetsPath);
-  } catch (error) {
-    if (error.code === "ENOENT") throw requestError("Asset copies require an assets directory.");
-    throw error;
+async function resolveAssetTemplateBaseDirectory(projectRoot, relativePath, options) {
+  validateAssetTemplateBaseDirectoryPath(relativePath);
+  const directoryPath = await resolveProjectDirectory(projectRoot, relativePath, options);
+  return directoryPath;
+}
+
+function getLocalAssetResourcePaths(source) {
+  const references = [];
+  const tags = /<([a-z][\w:-]*)\b([^>]*)>/gi;
+  const attributes = /(?:^|\s)(?:src|href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
+  for (const tag of source.matchAll(tags)) {
+    for (const attribute of tag[2].matchAll(attributes)) {
+      references.push(attribute[1] ?? attribute[2] ?? attribute[3]);
+    }
   }
-  if (assetsDetails.isSymbolicLink() || !assetsDetails.isDirectory()) {
-    throw requestError("Asset copies require a real assets directory.");
+  const cssUrls = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)/gi;
+  for (const reference of source.matchAll(cssUrls)) {
+    references.push((reference[1] ?? reference[2] ?? reference[3]).trim());
   }
-  const realAssetsPath = await fs.realpath(assetsPath);
-  const target = path.resolve(realProjectRoot, ...relativePath.split("/"));
-  if (!isWithin(realAssetsPath, target)) {
-    throw requestError("Asset copy path resolves outside the assets directory.");
-  }
-  let current = realProjectRoot;
-  for (const segment of relativePath.split("/")) {
+  return [...new Set(references)].flatMap((reference) => {
+    if (!reference || reference.startsWith("#") || reference.startsWith("data:") ||
+        reference.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(reference)) return [];
+    const encodedPath = reference.split(/[?#]/, 1)[0];
+    let resourcePath;
+    try {
+      resourcePath = decodeURIComponent(encodedPath);
+    } catch {
+      throw requestError(`Asset resource "${reference}" contains invalid URL escaping.`);
+    }
+    if (!resourcePath) return [];
+    if (resourcePath.startsWith("/") || resourcePath.includes("\\") ||
+        resourcePath.split("/").some((segment) =>
+          segment === ".." || segment.startsWith(".")
+        )) {
+      throw requestError(`Asset resource "${reference}" must stay inside the project.`);
+    }
+    return [resourcePath];
+  });
+}
+
+async function resolveAssetResourcePath(baseDirectory, resourcePath, { required = false } = {}) {
+  const segments = resourcePath.split("/");
+  let current = baseDirectory;
+  for (const [index, segment] of segments.entries()) {
     current = path.join(current, segment);
     let details;
     try {
       details = await fs.lstat(current);
     } catch (error) {
+      if (error.code === "ENOENT" && !required) return null;
       if (error.code === "ENOENT") {
-        throw requestError(`Asset copy source "${relativePath}" does not exist.`);
+        throw requestError(`Asset resource "${resourcePath}" does not exist in the template folder.`);
       }
       throw error;
     }
     if (details.isSymbolicLink()) {
-      throw requestError("Asset copies cannot follow symbolic links.");
+      throw requestError(`Asset resource "${resourcePath}" cannot use symbolic links.`);
     }
-    if (current !== target && !details.isDirectory()) {
-      throw requestError("Asset copy source path must contain only directories.");
+    if (index < segments.length - 1 && !details.isDirectory()) {
+      throw requestError(`Asset resource "${resourcePath}" has a non-directory parent.`);
     }
-  }
-  if (!(await fs.stat(target)).isDirectory()) {
-    throw requestError(`Asset copy source "${relativePath}" is not a directory.`);
-  }
-  return { assetsPath: realAssetsPath, directoryPath: target };
-}
-
-async function copyDirectory(source, target) {
-  await fs.mkdir(target);
-  for (const entry of await fs.readdir(source, { withFileTypes: true })) {
-    const sourcePath = path.join(source, entry.name);
-    const targetPath = path.join(target, entry.name);
-    const details = await fs.lstat(sourcePath);
-    if (details.isSymbolicLink()) {
-      throw requestError("Asset copies cannot contain symbolic links.");
-    }
-    if (details.isDirectory()) {
-      await copyDirectory(sourcePath, targetPath);
-    } else if (details.isFile()) {
-      await fs.copyFile(sourcePath, targetPath);
-    } else {
-      throw requestError("Asset copies can contain only regular files and directories.");
+    if (index === segments.length - 1 && !details.isFile()) {
+      throw requestError(`Asset resource "${resourcePath}" must be a regular file.`);
     }
   }
+  return current;
 }
 
 async function prepareAssetCopies(projectRoot, assetCopies, updates) {
@@ -257,13 +322,13 @@ async function prepareAssetCopies(projectRoot, assetCopies, updates) {
   } else {
     projectData = parseYamlMapping(await fs.readFile(path.join(projectRoot, "project.yml"), "utf8"));
   }
-  if (!Array.isArray(projectData.assets) || !Array.isArray(projectData.screens)) {
-    throw requestError("Asset copies require project.yml to list assets and Screens.");
+  if (!Array.isArray(projectData.screens)) {
+    throw requestError("Asset copies require project.yml to list Screens.");
   }
 
   const existingProject = parseYamlMapping(await fs.readFile(path.join(projectRoot, "project.yml"), "utf8"));
-  if (!Array.isArray(existingProject.assets) || !Array.isArray(existingProject.screens)) {
-    throw requestError("Asset copies require the current project.yml to list assets and Screens.");
+  if (!Array.isArray(existingProject.screens)) {
+    throw requestError("Asset copies require the current project.yml to list Screens.");
   }
   const seenTargets = new Set();
   const plans = [];
@@ -272,62 +337,92 @@ async function prepareAssetCopies(projectRoot, assetCopies, updates) {
       if (!request || Array.isArray(request) || typeof request !== "object" ||
           !/^[a-z][a-z0-9-]*$/.test(request.sourceId || "") ||
           !/^[a-z][a-z0-9-]*$/.test(request.targetId || "") ||
+          !/^[a-z][a-z0-9-]*$/.test(request.sourceScreen || "") ||
           !/^[a-z][a-z0-9-]*$/.test(request.targetScreen || "") ||
-          typeof request.sourceDirectory !== "string" ||
-          request.targetDirectory !== `assets/${request.targetId}`) {
+          typeof request.sourceFile !== "string" ||
+          request.sourceFile !== `screens/${request.sourceScreen}/assets/${request.sourceId}.html` ||
+          request.targetFile !== `screens/${request.targetScreen}/assets/${request.targetId}.html`) {
         throw requestError("Each asset copy must identify valid source and target assets and a destination Screen.");
       }
-      if (seenTargets.has(request.targetId)) {
-        throw requestError(`Asset "${request.targetId}" is copied more than once in one save.`);
+      if (seenTargets.has(request.targetFile)) {
+        throw requestError(`Asset file "${request.targetFile}" is copied more than once in one save.`);
       }
-      seenTargets.add(request.targetId);
-      const source = existingProject.assets?.find((entry) => entry.id === request.sourceId);
-      if (!source || source.directory !== request.sourceDirectory || !source.screen ||
-          source.screen === request.targetScreen) {
+      seenTargets.add(request.targetFile);
+      if (!existingProject.screens.some((entry) => entry.id === request.sourceScreen) ||
+          request.sourceScreen === request.targetScreen) {
         throw requestError(`Asset "${request.sourceId}" is not a page-specific source for this copy.`);
       }
       if (!projectData.screens.some((entry) => entry.id === request.targetScreen)) {
         throw requestError(`Destination Screen "${request.targetScreen}" does not exist.`);
       }
-      if (existingProject.assets.some((entry) =>
-        entry.id === request.targetId || entry.directory === request.targetDirectory
-      )) {
-        throw requestError(`Asset "${request.targetId}" already exists.`);
-      }
-      const targetEntry = projectData.assets.find((entry) => entry.id === request.targetId);
-      if (!targetEntry || targetEntry.directory !== request.targetDirectory ||
-          targetEntry.screen !== request.targetScreen ||
-          targetEntry["copied-from"] !== request.sourceId) {
-        throw requestError(`project.yml must list copied asset "${request.targetId}" under its destination Screen.`);
-      }
 
-      const { assetsPath, directoryPath } = await resolveAssetDirectory(projectRoot, request.sourceDirectory);
-      const targetPath = path.resolve(assetsPath, request.targetId);
-      if (!isWithin(assetsPath, targetPath)) {
-        throw requestError("Asset copy destination resolves outside the assets directory.");
-      }
+      const sourceParent = path.posix.dirname(request.sourceFile);
+      const targetParent = path.posix.dirname(request.targetFile);
+      const sourceParentPath = await resolveAssetTemplateBaseDirectory(projectRoot, sourceParent);
+      const targetParentPath = await resolveAssetTemplateBaseDirectory(projectRoot, targetParent, { create: true });
+      const sourcePath = path.join(sourceParentPath, path.posix.basename(request.sourceFile));
+      const targetPath = path.join(targetParentPath, path.posix.basename(request.targetFile));
+      await resolveAssetResourcePath(
+        sourceParentPath,
+        path.posix.basename(request.sourceFile),
+        { required: true }
+      );
       try {
         await fs.lstat(targetPath);
-        throw requestError(`Asset copy destination "${request.targetDirectory}" already exists.`, 409);
+        throw requestError(`Asset copy destination "${request.targetFile}" already exists.`, 409);
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }
-      const stagedDirectory = path.join(assetsPath, `.${request.targetId}.${randomUUID()}.tmp`);
+      const stagedDirectory = path.join(targetParentPath, `.${request.targetId}.${randomUUID()}.tmp`);
+      const stagedFile = path.join(stagedDirectory, path.posix.basename(request.targetFile));
       const plan = {
         ...request,
-        sourcePath: directoryPath,
+        sourcePath,
         targetPath,
-        stagedDirectory
+        sourceParentPath,
+        targetParentPath,
+        stagedDirectory,
+        stagedFile
       };
       plans.push(plan);
-      await copyDirectory(directoryPath, stagedDirectory);
-      const assetManifestPath = path.join(stagedDirectory, "asset.yml");
-      const assetManifest = parseYamlMapping(await fs.readFile(assetManifestPath, "utf8"));
-      if (assetManifest.id !== request.sourceId) {
-        throw requestError(`Source asset "${request.sourceId}" has a mismatched asset.yml id.`);
+      await fs.mkdir(stagedDirectory);
+      const assetSource = await fs.readFile(sourcePath, "utf8");
+      const { header, body } = validation.splitAssetDocument(assetSource, "Source template asset");
+      const assetDocument = parseYamlMapping(header);
+      validation.validateAssetTemplateHeader(assetDocument, "Source template asset");
+      if (assetDocument.id !== request.sourceId) {
+        throw requestError(`Source asset "${request.sourceId}" has a mismatched ${path.posix.basename(request.sourceFile)} front matter id.`);
       }
-      assetManifest.id = request.targetId;
-      await fs.writeFile(assetManifestPath, YAML.stringify(assetManifest), "utf8");
+      assetDocument.id = request.targetId;
+      const targetSource = validation.formatAssetDocument(YAML.stringify(assetDocument), body);
+      await fs.writeFile(stagedFile, targetSource, "utf8");
+      const targetUpdate = updates.find((update) => update.path === request.targetFile);
+      const resourceBody = targetUpdate
+        ? validation.splitAssetDocument(targetUpdate.content, request.targetFile).body
+        : body;
+      for (const resourcePath of getLocalAssetResourcePaths(resourceBody)) {
+        const sourceResource = path.resolve(sourceParentPath, ...resourcePath.split("/"));
+        if (!isWithin(sourceParentPath, sourceResource)) {
+          throw requestError(`Asset resource "${resourcePath}" resolves outside its template folder.`);
+        }
+        const targetResource = path.resolve(targetParentPath, ...resourcePath.split("/"));
+        if (!isWithin(targetParentPath, targetResource) || targetResource === targetPath) {
+          throw requestError(`Asset resource "${resourcePath}" conflicts with the copied template file.`);
+        }
+        await resolveAssetResourcePath(sourceParentPath, resourcePath, { required: true });
+        const existingResourcePath = await resolveAssetResourcePath(targetParentPath, resourcePath);
+        if (existingResourcePath) {
+          const existingResource = await fs.readFile(existingResourcePath);
+          const sourceContent = await fs.readFile(sourceResource);
+          if (!existingResource.equals(sourceContent)) {
+            throw requestError(`Asset resource "${resourcePath}" conflicts with a file in the destination template folder.`);
+          }
+        } else {
+          const stagedResource = path.resolve(stagedDirectory, ...resourcePath.split("/"));
+          await fs.mkdir(path.dirname(stagedResource), { recursive: true });
+          await fs.copyFile(sourceResource, stagedResource);
+        }
+      }
     }
   } catch (error) {
     await Promise.all(plans.map(({ stagedDirectory }) => fs.rm(stagedDirectory, { recursive: true, force: true })));
@@ -359,13 +454,38 @@ async function saveProjectFiles(projectRoot, files, assetCopies) {
       }
       try {
         validation.validateSpecContent(file.content);
+        if (/^screens\/[^/]+\/specs\/element-/.test(file.path)) {
+          const elementId = validation.validateElementSpecHeader(file.content, file.path);
+          validation.validateElementSpecPath(file.path, elementId);
+        }
       } catch (error) {
         throw requestError(`${file.path}: ${error.message || String(error)}`);
       }
       updates.push({ path: file.path, content: file.content, create });
     } else if (extension === ".html") {
       if (typeof file.content !== "string" || Object.hasOwn(file, "data")) {
-        throw requestError("Asset HTML save entries must contain text content.");
+        throw requestError("Asset document save entries must contain text content.");
+      }
+      try {
+        const { header, body } = validation.splitAssetDocument(file.content, file.path);
+        const assetDocument = parseYamlMapping(header);
+        validation.validateAssetTemplateHeader(assetDocument, file.path);
+        validation.assetCategoryPath(assetDocument, `${file.path} front matter`);
+        validation.validateAssetAttributes(assetDocument, `${file.path} front matter`);
+        validation.validateAssetSlots(assetDocument, `${file.path} front matter`);
+        const expectedId = path.posix.basename(file.path, ".html");
+        if (assetDocument.id !== expectedId) {
+          throw new Error(`front matter id must match Asset template file name "${expectedId}.html".`);
+        }
+        validation.validateAssetSlotMarkup(assetDocument, body, file.path);
+        const attributeNames = new Set(Object.keys(assetDocument.attributes || {}));
+        for (const match of body.matchAll(/\$\{attributes\.([^}]+)\}/g)) {
+          if (!attributeNames.has(match[1])) {
+            throw new Error(`references undeclared attribute "${match[1]}".`);
+          }
+        }
+      } catch (error) {
+        throw requestError(`${file.path}: ${error.message || String(error)}`);
       }
       updates.push({ path: file.path, content: file.content, create });
     } else if (typeof file.content === "string" && !Object.hasOwn(file, "data")) {
@@ -383,7 +503,7 @@ async function saveProjectFiles(projectRoot, files, assetCopies) {
 
   const stagedCopies = await prepareAssetCopies(projectRoot, assetCopies, updates);
   const staged = [];
-  const committedCopies = [];
+  const committedCopyFiles = [];
   try {
     for (const update of updates) {
       update.target = await resolveProjectFile(projectRoot, update.path, {
@@ -409,8 +529,27 @@ async function saveProjectFiles(projectRoot, files, assetCopies) {
       await fs.rename(update.temporaryPath, update.target);
     }
     for (const copy of stagedCopies) {
-      await fs.rename(copy.stagedDirectory, copy.targetPath);
-      committedCopies.push(copy.targetPath);
+      async function commitStagedFiles(directory, relativeDirectory = "") {
+        for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+          const stagedPath = path.join(directory, entry.name);
+          const relativePath = relativeDirectory
+            ? path.join(relativeDirectory, entry.name)
+            : entry.name;
+          const targetPath = path.join(copy.targetParentPath, relativePath);
+          if (entry.isDirectory()) {
+            await fs.mkdir(targetPath, { recursive: true });
+            await commitStagedFiles(stagedPath, relativePath);
+          } else if (entry.isFile()) {
+            await fs.link(stagedPath, targetPath);
+            await fs.rm(stagedPath);
+            committedCopyFiles.push(targetPath);
+          } else {
+            throw requestError("Copied Asset resources must be regular files or directories.");
+          }
+        }
+      }
+      await commitStagedFiles(copy.stagedDirectory);
+      await fs.rm(copy.stagedDirectory, { recursive: true, force: true });
     }
     for (const update of staged.filter((entry) => !entry.copyStage)) {
       if (update.create) {
@@ -432,8 +571,8 @@ async function saveProjectFiles(projectRoot, files, assetCopies) {
     await Promise.all(stagedCopies.map(({ stagedDirectory }) =>
       fs.rm(stagedDirectory, { recursive: true, force: true })
     ));
-    await Promise.all(committedCopies.map((targetPath) =>
-      fs.rm(targetPath, { recursive: true, force: true })
+    await Promise.all(committedCopyFiles.map((targetPath) =>
+      fs.rm(targetPath, { force: true })
     ));
     throw error;
   }
@@ -522,6 +661,10 @@ function createServer(options = {}) {
             connectedBrowsers: eventClients.size,
             selectionAvailable: selectionState.selection !== null
           });
+          return;
+        }
+        if (pathname === "/api/files") {
+          sendJson(response, 200, { files: await listProjectFiles(projectRoot) });
           return;
         }
         if (pathname === "/api/selection") {

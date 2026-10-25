@@ -7,6 +7,7 @@ const { spawn, spawnSync } = require("node:child_process");
 const YAML = require("yaml");
 const { createServer } = require("./server");
 const { OPENUX_VERSION, isWithin, resolveProjectPath, validateProject } = require("./project");
+const validation = require("./validation");
 
 const studioRoot = __dirname;
 const schemaFiles = new Map([
@@ -231,44 +232,46 @@ async function runInitCommand(args) {
     ["project.yml", YAML.stringify({
       name: "OpenUX Project",
       openux: OPENUX_VERSION,
-      screens: [{ id: "home", file: "screens/home.yml" }],
-      assets: [{ id: "page-layout", directory: "assets/page-layout" }],
+      screens: [{ id: "home", file: "screens/home/screen.yml" }],
       theme: "theme/theme.yml"
     })],
-    ["screens/home.yml", YAML.stringify({
+    ["screens/home/screen.yml", YAML.stringify({
       name: "Home",
       description: "Starter Screen for the OpenUX project.",
-      assets: [{
-        "asset-template": "page-layout",
+      elements: [{
+        id: "page-layout-instance",
+        type: "template",
+        src: "screens/home/assets/page-layout.html",
         name: "Page layout",
         slots: { content: [] }
       }]
     })],
-    ["assets/page-layout/asset.yml", YAML.stringify({
-      id: "page-layout",
-      name: "Page Layout",
-      description: "A simple page layout with a content slot.",
-      slots: [{ id: "content", name: "Content" }],
-      render: { type: "html-reference" }
-    })],
-    ["assets/page-layout/asset.html", [
-      '<main class="page-layout">',
-      "  <h1>Welcome to OpenUX</h1>",
-      '  <div data-openux-slot="content"></div>',
-      "</main>",
-      "",
-      "<style>",
-      "  .page-layout {",
-      "    box-sizing: border-box;",
-      "    min-height: 100vh;",
-      "    padding: 3rem;",
-      "    color: var(--theme-ink, #1e293b);",
-      "    background: var(--theme-background, #f3f6fa);",
-      "    font-family: system-ui, sans-serif;",
-      "  }",
-      "</style>",
-      ""
-    ].join("\n")],
+    ["screens/home/assets/page-layout.html", validation.formatAssetDocument(
+      YAML.stringify({
+        id: "page-layout",
+        name: "Page Layout",
+        description: "A simple page layout with a content slot.",
+        slots: [{ id: "content", name: "Content" }]
+      }),
+      [
+        '<main class="page-layout">',
+        "  <h1>Welcome to OpenUX</h1>",
+        '  <div data-openux-slot="content"></div>',
+        "</main>",
+        "",
+        "<style>",
+        "  .page-layout {",
+        "    box-sizing: border-box;",
+        "    min-height: 100vh;",
+        "    padding: 3rem;",
+        "    color: var(--theme-ink, #1e293b);",
+        "    background: var(--theme-background, #f3f6fa);",
+        "    font-family: system-ui, sans-serif;",
+        "  }",
+        "</style>",
+        ""
+      ].join("\n")
+    )],
     ["theme/theme.yml", YAML.stringify({
       name: "Default",
       colors: {
@@ -596,47 +599,28 @@ async function runRenderCommand(args) {
 }
 
 function pruneCandidates(result) {
-  return result.project.assets
-    .filter((asset) => !result.usedAssetIds.has(asset.id))
+  return [...result.assets.values()]
+    .filter((asset) => !result.usedAssetFiles.has(asset.file))
     .map((asset) => ({
-      type: "asset",
-      id: asset.id,
-      path: asset.directory,
-      reason: "No Screen instance, including nested instances, uses this asset."
+      type: asset.type,
+      id: asset.data?.id || path.posix.basename(asset.file),
+      path: asset.file,
+      reason: "No Screen Element or local template resource references this file."
     }));
 }
 
-function nodeValue(node, key) {
-  return node?.get(key, true)?.toJSON();
-}
-
-async function applyPrune(projectRoot, result, candidates) {
+async function applyPrune(projectRoot, candidates) {
   if (!candidates.length) return;
-  const removeAssetIds = new Set(candidates.filter((candidate) => candidate.type === "asset").map((entry) => entry.id));
-  const manifestPath = await resolveProjectPath(projectRoot, "project.yml", "file");
-  const source = await fs.readFile(manifestPath, "utf8");
-  const document = YAML.parseDocument(source);
-  if (document.errors.length) throw new Error(`Could not safely update project.yml: ${document.errors[0].message}`);
-  const assetSequence = document.get("assets", true);
-  if (assetSequence && Array.isArray(assetSequence.items)) {
-    assetSequence.items = assetSequence.items.filter((entry) => !removeAssetIds.has(nodeValue(entry, "id")));
-  }
-
   const quarantine = path.join(projectRoot, `.openux-prune-${randomUUID()}`);
-  const manifestTemp = path.join(projectRoot, `.project-${randomUUID()}.yml.tmp`);
-  const manifestBackup = path.join(projectRoot, `.project-${randomUUID()}.yml.backup`);
   const moved = [];
-  let backupCreated = false;
-  let manifestCommitted = false;
   await fs.mkdir(quarantine);
   try {
-    await fs.writeFile(manifestTemp, document.toString(), { encoding: "utf8", flag: "wx" });
     const stagedCandidates = [];
     for (const candidate of candidates) {
       const target = await resolveProjectPath(
         projectRoot,
         candidate.path,
-        candidate.type === "asset" ? "directory" : "file"
+        "file"
       );
       if (target === path.resolve(projectRoot)) {
         throw new Error(`Refusing to remove the project root for ${candidate.type} "${candidate.id}".`);
@@ -649,20 +633,8 @@ async function applyPrune(projectRoot, result, candidates) {
       await fs.rename(entry.target, stagedPath);
       moved.push({ originalPath: entry.target, stagedPath });
     }
-    await fs.rename(manifestPath, manifestBackup);
-    backupCreated = true;
-    await fs.rename(manifestTemp, manifestPath);
-    manifestCommitted = true;
   } catch (error) {
     const rollbackErrors = [];
-    if (backupCreated && !manifestCommitted) {
-      try {
-        await fs.rename(manifestBackup, manifestPath);
-        backupCreated = false;
-      } catch (rollbackError) {
-        rollbackErrors.push(rollbackError.message);
-      }
-    }
     for (const entry of moved.reverse()) {
       try {
         await fs.rename(entry.stagedPath, entry.originalPath);
@@ -670,7 +642,6 @@ async function applyPrune(projectRoot, result, candidates) {
         rollbackErrors.push(rollbackError.message);
       }
     }
-    await fs.rm(manifestTemp, { force: true });
     if (rollbackErrors.length) {
       throw new Error(
         `Prune failed: ${error.message}. Rollback was incomplete: ${rollbackErrors.join("; ")}. ` +
@@ -681,7 +652,6 @@ async function applyPrune(projectRoot, result, candidates) {
     throw error;
   }
 
-  await fs.rm(manifestBackup, { force: true });
   await fs.rm(quarantine, { recursive: true, force: true });
 }
 
@@ -696,7 +666,7 @@ async function runPruneCommand(args) {
   }
   const candidates = pruneCandidates(result);
   if (!candidates.length) {
-    console.log("No unused assets found.");
+    console.log("No unused Assets found.");
     return;
   }
   for (const candidate of candidates) {
@@ -707,7 +677,7 @@ async function runPruneCommand(args) {
     console.log('\nNo files were removed. Re-run with "--apply" to prune these resources.');
     return;
   }
-  await applyPrune(projectRoot, result, candidates);
+  await applyPrune(projectRoot, candidates);
   console.log(`\nRemoved ${candidates.length} unused resource${candidates.length === 1 ? "" : "s"}.`);
 }
 

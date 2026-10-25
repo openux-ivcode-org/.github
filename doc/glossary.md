@@ -12,15 +12,15 @@ A single view of a user interface. A screen defines the interface presented to t
 
 ### Asset
 
-A user interface element contained within a screen or another asset. Examples include buttons, text fields, menus, dialogs, and tables. Assets may define properties and presentation states; behavior for a specific use may be described by an attached Behavior Spec.
+A reusable file discovered under the project's shared `assets/` directory or a Screen's `assets/` directory. An Asset may be a template, image, or supporting resource. Assets are discovered from the filesystem rather than registered in `project.yml`.
 
-### Asset Template
+### Element
 
-A reusable definition of an asset type from which asset instances are created. Conceptually, a template is like a class.
+A placed occurrence on a Screen or inside a template slot. OpenUX directly supports text, image, and template Elements. Each Element has a unique Screen-local `id`; template Elements reference a template Asset by path and may define attributes, slots, visibility, and a Behavior Spec.
 
-### Asset Instance
+### Template Asset
 
-A specific use of an asset template, included in a screen and carrying detailed attributes for that use. Conceptually, an instance is like an object.
+An HTML Asset with YAML front matter that defines reusable markup, attributes, and optional named slots. The template is a reusable definition; a template Element is one placed occurrence.
 
 ### Theme
 
@@ -28,7 +28,7 @@ A project-level set of visual properties applied across all screens, such as col
 
 ### Behavior Spec
 
-A Markdown file linked through the optional `spec` property on the project manifest or an asset instance. It uses OpenSpec's structured requirement-and-scenario format to define observable behavior; it is not executable or an implementation plan.
+A Markdown file linked through the optional `spec` property on the project manifest or a Screen, or through `element-id` YAML front matter for a Screen Element. It uses OpenSpec's structured requirement-and-scenario format to define observable behavior; it is not executable or an implementation plan.
 
 ### State
 
@@ -58,7 +58,7 @@ A statement describing a condition, capability, or behavior that the software is
 
 ### Artifact
 
-A structured piece of information defined by the OpenUX standard, such as a screen, asset template, asset instance, theme, behavior spec, requirement, or change definition.
+A structured piece of information defined by the OpenUX standard, such as a Screen, Asset, Element, Theme, behavior spec, requirement, or change definition.
 
 ### Project
 

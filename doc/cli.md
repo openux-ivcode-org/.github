@@ -15,11 +15,11 @@ Run the commands as `openux ...` when the package's `bin` entry is available, or
 | `openux server selected [--port <port>]` | Print JSON containing the current browser-editor selection and the time it was last updated. |
 | `openux server update [--port <port>]` | Notify connected browser tabs after project files have changed. Tabs without unsaved edits refresh; tabs with unsaved edits are left untouched and prompted to save or reset before refreshing. |
 | `openux init [--project <directory>]` | Create a starter project under `<directory>/openux` (defaults to the current directory). Refuses to overwrite any generated file that already exists. |
-| `openux validate [--project <directory>]` | Validate project resources, asset bundles, local file references, and references between resources. |
+| `openux validate [--project <directory>]` | Validate project resources, discovered Assets, local file references, and references between resources. |
 | `openux version` | Print the OpenUX format version supported by this CLI. `openux --version` is an alias. |
 | `openux schema [project\|screen\|asset\|theme\|spec\|reference]` | Print Markdown authoring guidance. Use `reference` for the version-matched authoring workflow; without a type, print all guidance. |
 | `openux render <screen> --format <html\|image> [--state <id>] [--output <file>] [--project <directory>]` | Render a Screen by ID, optionally using one of its named preview states, as HTML or a full-page image. |
-| `openux prune [--apply] [--project <directory>]` | Report unused assets. No files are removed unless `--apply` is supplied. |
+| `openux prune [--apply] [--project <directory>]` | Report unreferenced files in discovered asset directories. No files are removed unless `--apply` is supplied. |
 
 `--port` selects the local server port for `server` commands. The status, selection, and update commands default to port `3000` or the `OPENUX_PORT` / `PORT` environment setting.
 
@@ -33,7 +33,7 @@ openux validate
 openux server start
 ```
 
-The command creates `project.yml`, a `home` Screen, a `page-layout` asset with a `content` slot, and a default Theme. It does not overwrite existing files; if any generated path already exists, initialization stops with an error.
+The command creates `project.yml`, a `home` Screen under `screens/home/`, a Screen-owned `page-layout` template Asset under `screens/home/assets/`, and a default Theme. It does not overwrite existing files; if any generated path already exists, initialization stops with an error.
 
 ## Rendering
 
@@ -51,7 +51,7 @@ openux render home --format image --state add-item-open --output home-dialog.png
 
 ## Pruning
 
-Pruning is non-destructive by default: `openux prune` reports candidates without removing them. Applying the cleanup requires `--apply`. An asset is a candidate only when no Screen instance uses it, including instances nested in asset slots. Applying prune removes the candidate asset directory and its entry in `project.yml`. A project-level behavior spec is for requirements shared across Screens or throughout the project; Screen-level specs describe page behavior and state activation, while asset-instance specs cover the behavior of individual controls or components.
+Pruning is non-destructive by default: `openux prune` reports unreferenced files without removing them. Applying the cleanup requires `--apply`. An Asset is a candidate when no Screen Element or local template resource references it. Applying prune removes only the candidate files; there is no Asset registry to update in `project.yml`. A project-level behavior spec is for requirements shared across Screens or throughout the project; Screen-level specs describe page behavior and state activation, while Element specs cover behavior specific to placed Elements.
 
 ## Intended workflow
 

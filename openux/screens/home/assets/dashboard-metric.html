@@ -1,0 +1,47 @@
+---
+id: dashboard-metric
+name: Dashboard Metric
+description: A reusable summary card with a value and comparison detail.
+category: Dashboards/Components
+attributes:
+  label:
+    type: string
+    default: Account metric
+    overridable: true
+  value:
+    type: string
+    default: "0"
+    overridable: true
+  change:
+    type: string
+    default: No change
+    overridable: true
+  trend:
+    type: list
+    options:
+      - positive
+      - neutral
+      - negative
+    default: positive
+    overridable: true
+---
+<style>
+  .openux-metric {
+    min-height: 112px;
+    padding: 15px 16px;
+    border: 1px solid var(--theme-border, #e7ebf2);
+    border-radius: 11px;
+    background: var(--theme-surface, #fff);
+    box-shadow: 0 2px 7px rgb(28 45 80 / 3%);
+  }
+  .openux-metric-label { margin: 0 0 9px; color: var(--theme-muted, #7b879a); font-size: 11px; font-weight: 600; }
+  .openux-metric-value { margin: 0 0 7px; color: var(--theme-ink, #1e2a40); font-size: 21px; font-weight: 750; letter-spacing: -.45px; }
+  .openux-metric-change { margin: 0; color: var(--theme-success, var(--theme-primary, #158567)); font-size: 10px; font-weight: 650; }
+  .openux-metric-change[data-trend="neutral"] { color: var(--theme-muted, #78869b); }
+  .openux-metric-change[data-trend="negative"] { color: var(--theme-danger, var(--theme-primary, #c34f5b)); }
+</style>
+<article class="openux-metric">
+  <p class="openux-metric-label">${attributes.label}</p>
+  <p class="openux-metric-value">${attributes.value}</p>
+  <p class="openux-metric-change" data-trend="${attributes.trend}">${attributes.change}</p>
+</article>

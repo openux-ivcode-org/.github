@@ -1,0 +1,108 @@
+name: Sign In
+description: A visual-only sign-in page concept for the Northstar financial app.
+note: Keep this preview static; do not collect or submit credentials.
+elements:
+  - id: northstar-sign-in-page
+    name: Northstar sign-in page
+    description: A responsive, visual-only sign-in composition.
+    note: Keep all nested elements static; this preview must not collect or submit
+      credentials.
+    slots:
+      brand:
+        - id: northstar-brand
+          name: Northstar brand
+          attributes:
+            mark: N
+            brand-name: Northstar
+          type: template
+          src: screens/sign-in/assets/sign-in-brand.html
+        - id: brand-story
+          name: Brand story
+          attributes:
+            eyebrow: A clearer view of your money
+            title: Make room for what matters.
+            description: Bring your accounts together, follow your progress, and feel more
+              confident about what comes next.
+          type: template
+          src: screens/sign-in/assets/sign-in-story.html
+        - id: account-balance-preview
+          name: Account balance preview
+          attributes:
+            label: Total balance
+            amount: $24,680.50
+            change: ↗ 8.4% this month
+          type: template
+          src: screens/sign-in/assets/sign-in-snapshot.html
+        - id: privacy-note
+          name: Privacy note
+          attributes:
+            message: Private by design · Protected with care
+          type: template
+          src: screens/sign-in/assets/sign-in-trust.html
+      content:
+        - id: sign-in-heading
+          name: Sign-in heading
+          attributes:
+            kicker: Your financial home
+            title: Welcome back
+            description: Sign in to pick up right where you left off.
+          type: template
+          src: screens/sign-in/assets/sign-in-heading.html
+        - id: email-field-preview
+          name: Email field preview
+          description: Static visual representation of an email field.
+          attributes:
+            label: Email address
+            preview-value: jordan.davis@example.com
+            hint: EMAIL
+            icon: "@"
+          type: template
+          src: screens/sign-in/assets/sign-in-field-visual.html
+        - id: password-field-preview
+          name: Password field preview
+          description: Static visual representation of a password field.
+          attributes:
+            label: Password
+            preview-value: ••••••••••••
+            hint: ◉
+            icon: •
+          type: template
+          src: screens/sign-in/assets/sign-in-field-visual.html
+        - id: sign-in-options-preview
+          name: Sign-in options preview
+          attributes:
+            remember-label: Remember this device
+            recovery-label: Forgot password?
+          type: template
+          src: screens/sign-in/assets/sign-in-options-visual.html
+        - id: primary-sign-in-action-preview
+          name: Primary sign-in action preview
+          description: Static visual representation of the primary sign-in action.
+          attributes:
+            label: Continue to dashboard
+            variant: primary
+          type: template
+          src: screens/sign-in/assets/sign-in-action-visual.html
+        - id: alternative-sign-in-divider
+          name: Alternative sign-in divider
+          attributes:
+            label: OR CONTINUE WITH
+          type: template
+          src: screens/sign-in/assets/sign-in-divider.html
+        - id: google-sign-in-option-preview
+          name: Google sign-in option preview
+          description: Static visual representation of an alternative sign-in option.
+          attributes:
+            label: Continue with Google
+            variant: secondary
+            mark: G
+          type: template
+          src: screens/sign-in/assets/sign-in-action-visual.html
+        - id: preview-disclaimer
+          name: Preview disclaimer
+          attributes:
+            text: Visual preview only — no credentials are collected or submitted.
+          type: template
+          src: screens/sign-in/assets/sign-in-disclaimer.html
+    type: template
+    src: screens/sign-in/assets/sign-in-layout.html

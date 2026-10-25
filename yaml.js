@@ -48,7 +48,16 @@ function parseOpenuxYaml(source) {
   }
 
   function valueAfterPair(raw, indent, line) {
-    if (raw) return scalar(raw, line);
+    if (raw) {
+      const parts = [raw];
+      if (!raw.startsWith('"') && !raw.startsWith("'") && !raw.startsWith("{") && !raw.startsWith("[")) {
+        while (cursor < lines.length && lines[cursor].indent > indent) {
+          parts.push(lines[cursor].text);
+          cursor += 1;
+        }
+      }
+      return scalar(parts.join(" "), line);
+    }
     if (cursor < lines.length && lines[cursor].indent > indent) {
       return block(lines[cursor].indent);
     }
@@ -93,7 +102,12 @@ function parseOpenuxYaml(source) {
 
       const pair = /^([^:]+):(?:\s|$)(.*)$/.exec(rest);
       if (!pair) {
-        result.push(scalar(rest, current.line));
+        const parts = [rest];
+        while (cursor < lines.length && lines[cursor].indent > indent) {
+          parts.push(lines[cursor].text);
+          cursor += 1;
+        }
+        result.push(scalar(parts.join(" "), current.line));
         continue;
       }
 

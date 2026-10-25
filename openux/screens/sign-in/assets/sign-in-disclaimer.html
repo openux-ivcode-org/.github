@@ -1,0 +1,20 @@
+---
+id: sign-in-disclaimer
+name: Sign-in Preview Disclaimer
+description: A short note clarifying that the sign-in page is only a visual preview.
+category: Forms/Sign-in
+attributes:
+  text:
+    type: string
+    default: Visual preview only — no credentials are collected or submitted.
+    overridable: true
+---
+<style>
+  .openux-sign-in-disclaimer {
+    margin: 20px 0 0;
+    color: var(--theme-muted, #718096);
+    font: 9px/1.6 Inter, "Segoe UI", Arial, sans-serif;
+    text-align: center;
+  }
+</style>
+<p class="openux-sign-in-disclaimer">${attributes.text}</p>

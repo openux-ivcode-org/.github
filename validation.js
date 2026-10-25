@@ -53,8 +53,105 @@
   }
 
   function validateSpecPath(filePath) {
-    if (typeof filePath !== "string" || !/^specs\/[a-z0-9]+(?:-[a-z0-9]+)*\.md$/.test(filePath)) {
-      throw new Error('Behavior spec path must be "specs/<name>.md" with a lowercase kebab-case name.');
+    const projectSpec = /^specs\/[a-z0-9]+(?:-[a-z0-9]+)*\.md$/;
+    const screenSpec = /^screens\/[a-z][a-z0-9-]*\/specs\/screen\.md$/;
+    const elementSpec = /^screens\/[a-z][a-z0-9-]*\/specs\/element-[a-z][a-z0-9-]*\.md$/;
+    if (typeof filePath !== "string" ||
+        (!projectSpec.test(filePath) && !screenSpec.test(filePath) && !elementSpec.test(filePath))) {
+      throw new Error(
+        'Behavior spec path must be "specs/<name>.md", "screens/<screen-id>/specs/screen.md", or "screens/<screen-id>/specs/element-<element-id>.md".'
+      );
+    }
+  }
+
+  function validateElementId(id, context = "Element") {
+    if (typeof id !== "string" || !/^[a-z][a-z0-9-]*$/.test(id)) {
+      throw new Error(`${context} id must use lowercase letters, numbers, and hyphens.`);
+    }
+    return id;
+  }
+
+  function splitAssetDocument(source, context = "Asset template") {
+    if (typeof source !== "string") {
+      throw new Error(`${context} must be text.`);
+    }
+    const match = source.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/);
+    if (!match) {
+      throw new Error(`${context} must begin with a YAML front matter block delimited by "---".`);
+    }
+    return { header: match[1], body: source.slice(match[0].length) };
+  }
+
+  function formatAssetDocument(header, body) {
+    const normalizedHeader = header.replace(/\r\n?/g, "\n").replace(/\n+$/, "");
+    return `---\n${normalizedHeader}\n---\n${body}`;
+  }
+
+  function validateAssetTemplateHeader(data, source) {
+    if (!isMapping(data)) throw new Error(`${source} front matter must contain a YAML mapping.`);
+    const supportedProperties = new Set([
+      "id", "name", "description", "category", "attributes", "slots", "render"
+    ]);
+    for (const property of Object.keys(data)) {
+      if (property === "spec") {
+        throw new Error(`${source}: behavior specs cannot be attached to asset templates; attach the spec to an Element in a Screen file.`);
+      }
+      if (!supportedProperties.has(property)) {
+        throw new Error(`${source} front matter has unsupported property "${property}".`);
+      }
+    }
+    validateElementId(data.id, `${source} front matter Asset template`);
+    if (typeof data.name !== "string" || !data.name.trim()) {
+      throw new Error(`${source} front matter name must be a non-empty string.`);
+    }
+    if (typeof data.description !== "string") {
+      throw new Error(`${source} front matter description must be a string.`);
+    }
+    if (data.render !== undefined) {
+      if (!isMapping(data.render)) {
+        throw new Error(`${source} front matter render must be a mapping.`);
+      }
+      if (Object.keys(data.render).some((property) => property !== "interactive")) {
+        throw new Error(`${source} front matter render only supports the "interactive" property.`);
+      }
+      if (data.render.interactive !== undefined && typeof data.render.interactive !== "boolean") {
+        throw new Error(`${source} front matter render interactive must be a boolean.`);
+      }
+    }
+  }
+
+  function validateElementSpecHeader(source, context = "Element behavior spec") {
+    if (typeof source !== "string") {
+      throw new Error(`${context} must be Markdown text.`);
+    }
+    const frontMatter = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+    if (!frontMatter) {
+      throw new Error(`${context} must begin with YAML front matter containing "element-id".`);
+    }
+    let elementId;
+    for (const line of frontMatter[1].split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      const match = line.match(/^element-id:\s*([a-z][a-z0-9-]*)\s*$/);
+      if (!match) {
+        throw new Error(`${context} front matter must contain only an "element-id" using lowercase letters, numbers, and hyphens.`);
+      }
+      if (elementId !== undefined) {
+        throw new Error(`${context} front matter must contain "element-id" only once.`);
+      }
+      elementId = match[1];
+    }
+    if (!elementId) {
+      throw new Error(`${context} front matter must contain an "element-id".`);
+    }
+    return elementId;
+  }
+
+  function validateElementSpecPath(filePath, elementId) {
+    validateSpecPath(filePath);
+    validateElementId(elementId);
+    const expectedPath = `${filePath.slice(0, filePath.lastIndexOf("/") + 1)}element-${elementId}.md`;
+    if (filePath !== expectedPath) {
+      throw new Error(`Element behavior spec "${filePath}" must be named "element-${elementId}.md".`);
     }
   }
 
@@ -318,6 +415,13 @@
     validateAssetAttributes,
     validateAssetSlotMarkup,
     validateAssetSlots,
+    splitAssetDocument,
+    formatAssetDocument,
+    validateElementId,
+    validateAssetInstanceId: validateElementId,
+    validateAssetTemplateHeader,
+    validateElementSpecHeader,
+    validateElementSpecPath,
     validatePreviewStates,
     validateSpecContent,
     validateSpecPath,

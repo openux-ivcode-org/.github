@@ -40,10 +40,15 @@ async function validateProject(projectRoot) {
   const errors = [];
   const assets = new Map();
   const screens = [];
-  const usedAssetIds = new Set();
+  const usedAssetFiles = new Set();
   const referencedSpecPaths = new Set();
+  const specContents = new Map();
+  const templateIds = new Map();
   let project;
   let theme;
+  const imageExtensions = new Set([
+    ".avif", ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".png", ".svg", ".webp"
+  ]);
 
   async function readYaml(relativePath) {
     try {
@@ -70,6 +75,21 @@ async function validateProject(projectRoot) {
       pushError(errors, source, error);
       return false;
     }
+  }
+
+  async function listElementSpecPaths(screenId) {
+    const relativeDirectory = `screens/${screenId}/specs`;
+    let directory;
+    try {
+      directory = await resolveProjectPath(projectRoot, relativeDirectory, "directory");
+    } catch (error) {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    }
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    return entries
+      .filter((entry) => /^element-[a-z][a-z0-9-]*\.md$/.test(entry.name))
+      .map((entry) => `${relativeDirectory}/${entry.name}`);
   }
 
   async function validateResources(sourceText, sourceFile, baseDirectory) {
@@ -104,13 +124,16 @@ async function validateProject(projectRoot) {
       }
       if (!resourcePath) continue;
       const relativePath = path.posix.join(baseDirectory, resourcePath);
-      await checkFile(relativePath, `${sourceFile} resource "${reference}"`);
+      if (await checkFile(relativePath, `${sourceFile} resource "${reference}"`) &&
+          /^(?:assets|screens\/[a-z][a-z0-9-]*\/assets)\//.test(relativePath)) {
+        usedAssetFiles.add(relativePath);
+      }
     }
   }
 
   project = await readYaml("project.yml");
   if (!project) {
-    return { errors, project: null, assets, screens, usedAssetIds, referencedSpecPaths };
+    return { errors, project: null, assets, screens, usedAssetFiles, referencedSpecPaths };
   }
 
   if (typeof project.openux !== "string" || !project.openux) {
@@ -119,13 +142,18 @@ async function validateProject(projectRoot) {
     errors.push(`project.yml: OpenUX version "${project.openux}" is not supported by this CLI (expected "${OPENUX_VERSION}").`);
   }
   if (!Array.isArray(project.screens)) errors.push("project.yml: screens must be a list.");
-  if (!Array.isArray(project.assets)) errors.push("project.yml: assets must be a list.");
+  if (Object.hasOwn(project, "assets") || Object.hasOwn(project, "asset-templates")) {
+    errors.push("project.yml: asset registries are no longer supported; place files under assets/ or screens/<screen-id>/assets/.");
+  }
   if (Object.hasOwn(project, "workflows")) {
-    errors.push("project.yml: workflows are no longer supported; use project.spec, a Screen spec, or an asset instance's spec.");
+    errors.push("project.yml: workflows are no longer supported; use project.spec, a Screen spec, or an Element's spec.");
   }
   if (project.spec !== undefined) {
     try {
       validation.validateSpecPath(project.spec);
+      if (!project.spec.startsWith("specs/")) {
+        throw new Error('Project behavior specs must be saved under "specs/".');
+      }
       referencedSpecPaths.add(project.spec);
     } catch (error) {
       pushError(errors, "project.yml spec", error);
@@ -150,7 +178,7 @@ async function validateProject(projectRoot) {
       }
       if (ids.has(entry.id)) errors.push(`project.yml: ${kind} defines id "${entry.id}" more than once.`);
       ids.add(entry.id);
-      const locationKey = kind === "assets" ? "directory" : "file";
+      const locationKey = "file";
       if (typeof entry[locationKey] !== "string" || !entry[locationKey]) {
         errors.push(`project.yml: ${kind} "${entry.id}" must define ${locationKey}.`);
         continue;
@@ -164,76 +192,11 @@ async function validateProject(projectRoot) {
     return validEntries;
   }
 
-  const assetEntries = indexEntries(project.assets, "assets");
   const screenEntries = indexEntries(project.screens, "screens");
-  const screenIds = new Set(screenEntries.map((entry) => entry.id));
-  for (const entry of assetEntries) {
-    if (entry.screen === undefined) continue;
-    if (typeof entry.screen !== "string" || !/^[a-z][a-z0-9-]*$/.test(entry.screen)) {
-      errors.push(`project.yml: asset "${entry.id}" screen must be a Screen ID.`);
-    } else if (!screenIds.has(entry.screen)) {
-      errors.push(`project.yml: asset "${entry.id}" references unknown Screen "${entry.screen}".`);
+  for (const entry of screenEntries) {
+    if (entry.file !== `screens/${entry.id}/screen.yml`) {
+      errors.push(`project.yml: Screen "${entry.id}" file must be "screens/${entry.id}/screen.yml".`);
     }
-  }
-  for (const entry of assetEntries) {
-    if (entry["copied-from"] === undefined) continue;
-    if (typeof entry["copied-from"] !== "string" ||
-        !/^[a-z][a-z0-9-]*$/.test(entry["copied-from"]) ||
-        entry["copied-from"] === entry.id) {
-      errors.push(`project.yml: asset "${entry.id}" copied-from must be a different asset ID.`);
-    }
-    if (!entry.screen) {
-      errors.push(`project.yml: copied asset "${entry.id}" must be assigned to a Screen.`);
-    }
-  }
-
-  for (const entry of assetEntries) {
-    const directory = entry.directory.replace(/\/+$/, "");
-    try {
-      await resolveProjectPath(projectRoot, directory, "directory");
-    } catch (error) {
-      pushError(errors, `assets/${entry.id}`, error);
-      continue;
-    }
-    const manifestPath = `${directory}/asset.yml`;
-    const data = await readYaml(manifestPath);
-    if (!data) continue;
-    if (Object.hasOwn(data, "spec")) {
-      errors.push(`${manifestPath}: behavior specs cannot be attached to asset templates; attach the spec to an asset instance in a Screen file.`);
-    }
-    if (data.id !== entry.id) {
-      errors.push(`${manifestPath}: id must match project.yml asset id "${entry.id}".`);
-    }
-    try {
-      validation.assetCategoryPath(data, manifestPath);
-      validation.validateAssetAttributes(data, manifestPath);
-      validation.validateAssetSlots(data, manifestPath);
-    } catch (error) {
-      pushError(errors, manifestPath, error);
-    }
-    const htmlPath = data.render?.source || "asset.html";
-    let resolvedHtmlPath;
-    try {
-      safeRelativePath(htmlPath);
-      resolvedHtmlPath = `${directory}/${htmlPath}`;
-      const htmlFile = await resolveProjectPath(projectRoot, resolvedHtmlPath, "file");
-      const markup = await fs.readFile(htmlFile, "utf8");
-      try {
-        validation.validateAssetSlotMarkup(data, markup, resolvedHtmlPath);
-      } catch (error) {
-        pushError(errors, resolvedHtmlPath, error);
-      }
-      await validateResources(markup, resolvedHtmlPath, directory);
-      const attributeNames = new Set(Object.keys(data.attributes || {}));
-      for (const match of markup.matchAll(/\$\{attributes\.([^}]+)\}/g)) {
-        if (!attributeNames.has(match[1])) {
-          errors.push(`${resolvedHtmlPath}: references undeclared attribute "${match[1]}".`);
-        }
-      }
-    } catch (error) {
-      pushError(errors, `${manifestPath} render.source`, error);
-    }
-    assets.set(entry.id, { ...entry, directory, data, htmlPath: resolvedHtmlPath });
   }
 
   for (const entry of screenEntries) {
@@ -241,10 +204,85 @@ async function validateProject(projectRoot) {
     if (data) screens.push({ id: entry.id, file: entry.file, data });
   }
 
+  async function discoverAssetDirectory(relativeDirectory, ownerScreen, baseDirectory = relativeDirectory) {
+    let directory;
+    try {
+      directory = await resolveProjectPath(projectRoot, relativeDirectory, "directory");
+    } catch (error) {
+      if (error.code === "ENOENT") return;
+      pushError(errors, relativeDirectory, error);
+      return;
+    }
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const relativePath = `${relativeDirectory}/${entry.name}`;
+      try {
+        const absolutePath = path.join(directory, entry.name);
+        const details = await fs.lstat(absolutePath);
+        if (details.isSymbolicLink()) {
+          throw new Error("asset directories cannot contain symbolic links.");
+        }
+        if (details.isDirectory()) {
+          await discoverAssetDirectory(relativePath, ownerScreen, baseDirectory);
+          continue;
+        }
+        if (!details.isFile()) throw new Error("asset paths must be regular files.");
+        const extension = path.posix.extname(entry.name).toLowerCase();
+        const fileType = extension === ".html"
+          ? "template"
+          : imageExtensions.has(extension) ? "image" : "resource";
+        if (fileType === "template" &&
+            path.posix.dirname(relativePath) !== baseDirectory) {
+          throw new Error("template HTML files must be directly inside an assets directory.");
+        }
+        const asset = { file: relativePath, type: fileType, screen: ownerScreen };
+        if (fileType === "template") {
+          const source = await fs.readFile(absolutePath, "utf8");
+          const { header, body } = validation.splitAssetDocument(source, relativePath);
+          const document = YAML.parseDocument(header);
+          if (document.errors.length) {
+            throw new Error(document.errors.map((issue) => issue.message).join("; "));
+          }
+          const data = document.toJS();
+          validation.validateAssetTemplateHeader(data, relativePath);
+          if (data.id !== path.posix.basename(relativePath, ".html")) {
+            throw new Error(`front matter id must match filename "${path.posix.basename(relativePath, ".html")}".`);
+          }
+          if (templateIds.has(data.id)) {
+            throw new Error(`template id "${data.id}" is already defined by "${templateIds.get(data.id)}".`);
+          }
+          templateIds.set(data.id, relativePath);
+          validation.assetCategoryPath(data, `${relativePath} front matter`);
+          validation.validateAssetAttributes(data, `${relativePath} front matter`);
+          validation.validateAssetSlots(data, `${relativePath} front matter`);
+          validation.validateAssetSlotMarkup(data, body, relativePath);
+          await validateResources(body, relativePath, path.posix.dirname(relativePath));
+          const attributeNames = new Set(Object.keys(data.attributes || {}));
+          for (const match of body.matchAll(/\$\{attributes\.([^}]+)\}/g)) {
+            if (!attributeNames.has(match[1])) {
+              throw new Error(`references undeclared attribute "${match[1]}".`);
+            }
+          }
+          asset.data = data;
+          asset.html = body;
+        }
+        assets.set(relativePath, asset);
+      } catch (error) {
+        pushError(errors, relativePath, error);
+      }
+    }
+  }
+
+  await discoverAssetDirectory("assets", null);
+  for (const screen of screens) {
+    await discoverAssetDirectory(`screens/${screen.id}/assets`, screen.id);
+  }
+
   const linkedSpecsByScreen = new Map();
   for (const screen of screens) {
     const linkedSpecPaths = new Set();
     linkedSpecsByScreen.set(screen.file, linkedSpecPaths);
+    const assetInstanceIds = new Set();
     let previewStateIds = new Set(["default"]);
     let previewStates = [{ id: "default", name: "Default" }];
     try {
@@ -256,63 +294,104 @@ async function validateProject(projectRoot) {
     if (screen.data.spec !== undefined) {
       try {
         validation.validateSpecPath(screen.data.spec);
+        if (screen.data.spec !== `screens/${screen.id}/specs/screen.md`) {
+          throw new Error(`Screen behavior specs must be saved as "screens/${screen.id}/specs/screen.md".`);
+        }
         referencedSpecPaths.add(screen.data.spec);
         linkedSpecPaths.add(screen.data.spec);
       } catch (error) {
         pushError(errors, `${screen.file} spec`, error);
       }
     }
-    if (!Array.isArray(screen.data.assets)) {
-      errors.push(`${screen.file}: Screen "${screen.id}" assets must be a list.`);
+    if (!Array.isArray(screen.data.elements)) {
+      errors.push(`${screen.file}: Screen "${screen.id}" elements must be a list.`);
       continue;
     }
-    if (screen.data.assets.length === 0) continue;
-    if (screen.data.assets.length !== 1) {
-      errors.push(`${screen.file}: Screen "${screen.id}" must contain exactly one root layout asset.`);
-      continue;
-    }
-    function validateInstance(instance, instancePath, depth = 0) {
-      const location = `${screen.file} assets${instancePath}`;
+    function validateElement(instance, instancePath, depth = 0) {
+      const location = `${screen.file} elements${instancePath}`;
       if (depth > 64) {
-        errors.push(`${location}: asset nesting exceeds the maximum depth of 64.`);
+        errors.push(`${location}: element nesting exceeds the maximum depth of 64.`);
         return;
       }
       if (!validation.isMapping(instance)) {
-        errors.push(`${location}: asset instance must be a mapping.`);
+        errors.push(`${location}: Element must be a mapping.`);
         return;
       }
-      const assetId = instance["asset-template"];
-      if (typeof assetId !== "string") {
-        errors.push(`${location}: asset-template must be an asset id.`);
+      try {
+        validation.validateElementId(instance.id, location);
+        if (assetInstanceIds.has(instance.id)) {
+          errors.push(`${location}: Element id "${instance.id}" is already used on this Screen.`);
+        }
+        assetInstanceIds.add(instance.id);
+      } catch (error) {
+        pushError(errors, location, error);
+      }
+      if (!["text", "image", "template"].includes(instance.type)) {
+        errors.push(`${location}: type must be "text", "image", or "template".`);
         return;
       }
-      usedAssetIds.add(assetId);
-      const asset = assets.get(assetId);
-      if (!asset) {
-        errors.push(`${location}: references unknown asset "${assetId}".`);
-        return;
-      }
-      if (asset.screen && asset.screen !== screen.id) {
-        errors.push(
-          `${location}: asset "${assetId}" belongs to Screen "${asset.screen}" and cannot be used on Screen "${screen.id}".`
-        );
-      }
-      if (instance.spec !== undefined) {
-        try {
-          validation.validateSpecPath(instance.spec);
-          referencedSpecPaths.add(instance.spec);
-          linkedSpecPaths.add(instance.spec);
-        } catch (error) {
-          pushError(errors, `${location} spec`, error);
+      const allowedProperties = new Set([
+        "id", "type", "name", "description", "note", "visibility", "src", "alt", "content",
+        "tag", "attributes", "slots"
+      ]);
+      for (const property of Object.keys(instance)) {
+        if (!allowedProperties.has(property)) {
+          errors.push(`${location}: unsupported property "${property}".`);
         }
       }
-      if (Object.hasOwn(instance, "interactions")) {
-        errors.push(`${location}: interactions are no longer supported; describe behavior in the instance's Markdown spec.`);
+      for (const property of ["name", "description", "note"]) {
+        if (instance[property] !== undefined && typeof instance[property] !== "string") {
+          errors.push(`${location}: ${property} must be a string.`);
+        }
+      }
+      if (instance.type === "template" &&
+          (instance.name !== undefined && !instance.name.trim())) {
+        errors.push(`${location}: name must not be empty.`);
+      }
+      let asset = null;
+      if (instance.type === "text") {
+        if (typeof instance.content !== "string") {
+          errors.push(`${location}: text content must be a string.`);
+        }
+        if (instance.tag !== undefined &&
+            !["p", "span", "h1", "h2", "h3", "h4", "h5", "h6", "label", "strong", "small"].includes(instance.tag)) {
+          errors.push(`${location}: text tag is not supported.`);
+        }
+        for (const property of ["src", "alt", "attributes", "slots"]) {
+          if (Object.hasOwn(instance, property)) errors.push(`${location}: text elements cannot define "${property}".`);
+        }
+      } else {
+        if (typeof instance.src !== "string" || !instance.src) {
+          errors.push(`${location}: ${instance.type} elements must define an asset file path in src.`);
+          return;
+        }
+        asset = assets.get(instance.src);
+        if (!asset || (instance.type === "template" && asset.type !== "template") ||
+            (instance.type === "image" && asset.type !== "image")) {
+          errors.push(`${location}: src "${instance.src}" does not reference a discovered ${instance.type} asset.`);
+          return;
+        }
+        usedAssetFiles.add(instance.src);
+        if (asset.screen && asset.screen !== screen.id) {
+          errors.push(`${location}: asset "${instance.src}" belongs to Screen "${asset.screen}" and cannot be used on Screen "${screen.id}".`);
+        }
+        if (instance.type === "image") {
+          if (typeof instance.alt !== "string") {
+            errors.push(`${location}: image alt must be a string (use an empty string for decorative images).`);
+          }
+          for (const property of ["content", "tag", "attributes", "slots"]) {
+            if (Object.hasOwn(instance, property)) errors.push(`${location}: image elements cannot define "${property}".`);
+          }
+        } else {
+          for (const property of ["alt", "content", "tag"]) {
+            if (Object.hasOwn(instance, property)) errors.push(`${location}: template elements cannot define "${property}".`);
+          }
+        }
+      }
+      if (Object.hasOwn(instance, "spec")) {
+        errors.push(`${location}: Element behavior specs are linked by Markdown front matter "element-id", not a Screen YAML spec property.`);
       }
       if (instance.visibility !== undefined) {
-        if (depth === 0) {
-          errors.push(`${location}: the root layout cannot have state-specific visibility.`);
-        }
         if (!validation.isMapping(instance.visibility)) {
           errors.push(`${location}: visibility must be a mapping of preview state ids to booleans.`);
         } else {
@@ -326,56 +405,89 @@ async function validateProject(projectRoot) {
           }
         }
       }
-      const definitions = asset.data.attributes || {};
-      const values = instance.attributes === undefined ? {} : instance.attributes;
-      if (!validation.isMapping(values)) {
-        errors.push(`${location}: attributes must be a mapping.`);
-      } else {
-        for (const [name, value] of Object.entries(values)) {
-          const definition = definitions[name];
-          if (!definition) {
-            errors.push(`${location}: asset "${assetId}" does not define attribute "${name}".`);
-          } else if (definition.overridable !== true) {
-            errors.push(`${location}: asset attribute "${assetId}.${name}" is not overridable.`);
-          } else if (!validation.isValidAttributeValue(definition, value)) {
-            errors.push(`${location}: value for "${assetId}.${name}" does not match its declared type.`);
+      if (instance.type === "template" && asset) {
+        const definitions = asset.data.attributes || {};
+        const values = instance.attributes === undefined ? {} : instance.attributes;
+        if (!validation.isMapping(values)) {
+          errors.push(`${location}: attributes must be a mapping.`);
+        } else {
+          for (const [name, value] of Object.entries(values)) {
+            const definition = definitions[name];
+            if (!definition) {
+              errors.push(`${location}: template "${instance.src}" does not define attribute "${name}".`);
+            } else if (definition.overridable !== true) {
+              errors.push(`${location}: template attribute "${instance.src}.${name}" is not overridable.`);
+            } else if (!validation.isValidAttributeValue(definition, value)) {
+              errors.push(`${location}: value for "${instance.src}.${name}" does not match its declared type.`);
+            }
           }
         }
-      }
-      const declaredSlots = new Set(
-        (Array.isArray(asset.data.slots) ? asset.data.slots : []).map((slot) => slot.id)
-      );
-      const instanceSlots = instance.slots === undefined ? {} : instance.slots;
-      if (!validation.isMapping(instanceSlots)) {
-        errors.push(`${location}: slots must be a mapping.`);
-      } else {
-        if (!asset.data.slots && instance.slots !== undefined) {
-          errors.push(`${location}: asset "${assetId}" does not define slots.`);
-        }
-        for (const [slotId, children] of Object.entries(instanceSlots)) {
-          if (!declaredSlots.has(slotId)) {
-            errors.push(`${location}: asset "${assetId}" does not define slot "${slotId}".`);
+        const declaredSlots = new Set(
+          (Array.isArray(asset.data.slots) ? asset.data.slots : []).map((slot) => slot.id)
+        );
+        const instanceSlots = instance.slots === undefined ? {} : instance.slots;
+        if (!validation.isMapping(instanceSlots)) {
+          errors.push(`${location}: slots must be a mapping.`);
+        } else {
+          if (!asset.data.slots && instance.slots !== undefined) {
+            errors.push(`${location}: template "${instance.src}" does not define slots.`);
           }
-          if (!Array.isArray(children)) {
-            errors.push(`${location}: slot "${slotId}" must contain a list of asset instances.`);
-            continue;
+          for (const [slotId, children] of Object.entries(instanceSlots)) {
+            if (!declaredSlots.has(slotId)) {
+              errors.push(`${location}: template "${instance.src}" does not define slot "${slotId}".`);
+            }
+            if (!Array.isArray(children)) {
+              errors.push(`${location}: slot "${slotId}" must contain a list of Elements.`);
+              continue;
+            }
+            children.forEach((child, index) =>
+              validateElement(child, `${instancePath}.${slotId}[${index}]`, depth + 1)
+            );
           }
-          children.forEach((child, index) =>
-            validateInstance(child, `${instancePath}.${slotId}[${index}]`, depth + 1)
-          );
         }
+      } else if (instance.type !== "template" && instance.slots !== undefined) {
+        errors.push(`${location}: ${instance.type} elements cannot define slots.`);
       }
       return asset;
     }
 
-    const rootAsset = validateInstance(screen.data.assets[0], "[0]");
-    if (rootAsset && !rootAsset.data.slots?.length) {
-      errors.push(`${screen.file}: root asset "${rootAsset.id}" must define at least one named slot.`);
+    const elementSpecIds = new Set();
+    let elementSpecPaths = [];
+    screen.data.elements.forEach((element, index) => validateElement(element, `[${index}]`));
+    try {
+      elementSpecPaths = await listElementSpecPaths(screen.id);
+    } catch (error) {
+      pushError(errors, `${screen.file} Element specs`, error);
+    }
+    for (const specPath of elementSpecPaths) {
+      try {
+        validation.validateSpecPath(specPath);
+      } catch (error) {
+        pushError(errors, `Behavior spec "${specPath}"`, error);
+        continue;
+      }
+      try {
+        const target = await resolveProjectPath(projectRoot, specPath, "file");
+        const content = await fs.readFile(target, "utf8");
+        specContents.set(specPath, content);
+        validation.validateSpecContent(content);
+        const elementId = validation.validateElementSpecHeader(content, specPath);
+        validation.validateElementSpecPath(specPath, elementId);
+        if (!assetInstanceIds.has(elementId)) continue;
+        if (elementSpecIds.has(elementId)) {
+          throw new Error(`Element "${elementId}" has more than one behavior spec.`);
+        }
+        elementSpecIds.add(elementId);
+        referencedSpecPaths.add(specPath);
+        linkedSpecPaths.add(specPath);
+      } catch (error) {
+        pushError(errors, `Behavior spec "${specPath}"`, error);
+      }
     }
   }
 
-  const specContents = new Map();
   for (const specPath of referencedSpecPaths) {
+    if (specContents.has(specPath)) continue;
     try {
       const target = await resolveProjectPath(projectRoot, specPath, "file");
       const content = await fs.readFile(target, "utf8");
@@ -435,7 +547,7 @@ async function validateProject(projectRoot) {
     project,
     assets,
     screens,
-    usedAssetIds,
+    usedAssetFiles,
     referencedSpecPaths
   };
 }

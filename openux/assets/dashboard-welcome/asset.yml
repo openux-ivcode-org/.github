@@ -1,7 +1,0 @@
-id: dashboard-welcome
-name: Dashboard Welcome
-description: A welcome banner introducing the account overview.
-category: Dashboards/Components
-render:
-  type: html-reference
-  source: asset.html

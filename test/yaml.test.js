@@ -40,3 +40,16 @@ test("parses light and dark theme color modes", () => {
     }
   });
 });
+
+test("folds indented plain scalar continuations", () => {
+  assert.deepEqual(parseOpenuxYaml([
+    "description: A multi-line value",
+    "  that continues on the next line.",
+    "items:",
+    "  - first item",
+    "    with a continuation."
+  ].join("\n")), {
+    description: "A multi-line value that continues on the next line.",
+    items: ["first item with a continuation."]
+  });
+});

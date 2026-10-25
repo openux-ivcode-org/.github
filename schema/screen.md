@@ -2,22 +2,18 @@
 
 A Screen is one YAML file named by an entry in `openux/project.yml` under `screens[].file`. Save the file under `openux/`; its path in the manifest is relative to that directory.
 
-Each structural mapping in a Screen file accepts only the properties listed in this schema; an unlisted property is invalid. Keys in an instance's `attributes` mapping must be declared as overridable attributes by its asset template. Keys in `slots` must match slot IDs declared by that template.
-
-The Screen file has these properties:
+The Screen ID is defined by the matching `screens[].id` in `project.yml`; do not add an `id` property to the Screen file.
 
 | Property | Type | Required | Definition |
 |---|---|---:|---|
 | `name` | string | Yes | Human-readable Screen name. |
 | `description` | string | Yes | Description of the Screen. |
 | `note` | string | No | Implementation guidance for the Screen. |
-| `spec` | string | No | Path to this Screen's Markdown behavior spec under `specs/`. |
-| `assets` | list | Yes | Zero or one root asset instance. An empty list is allowed while building the Screen; when populated, the root instance must define the layout. |
+| `spec` | string | No | Path to this Screen's behavior spec: `screens/<screen-id>/specs/screen.md`. |
+| `elements` | list | Yes | Ordered list of placed Screen Elements. An empty list is allowed while building the Screen. |
 | `preview-states` | list | No | Named visual states for previewing this Screen. If omitted, the Screen has an implicit `default` state. |
 
-The Screen ID is defined by the matching `screens[].id` in `project.yml`; do not add an `id` property to the Screen file.
-
-Use the Screen-level `spec` for behavior spanning the page, including activation conditions for its preview states. Keep individual control behavior in the relevant asset-instance specs.
+Use the Screen-level spec for behavior spanning the page, including activation conditions for its preview states. Keep individual Element behavior in the relevant Element specs.
 
 ## Preview States
 
@@ -31,26 +27,36 @@ Each item in `preview-states` is a mapping with these properties:
 
 Every non-default preview state must have a non-empty description. The implicit or explicit `default` state does not require one. Preview states are editor-only visual configurations; they do not define application navigation or executable behavior. The Studio starts in `default`. Select another state to preview its visibility configuration without changing the Screen's authored defaults.
 
-When a Screen defines non-default preview states, each state ID must appear in at least one scenario step in a behavior spec linked to that Screen or one of its asset instances. Write the step as `- **SHOW** <state-id>` after that scenario's `THEN` step. `SHOW` records which preview state represents the scenario outcome; it does not make the state executable.
+When a Screen defines non-default preview states, each state ID must appear in at least one scenario step in a behavior spec linked to that Screen or one of its Elements. Write the step as `- **SHOW** <state-id>` after that scenario's `THEN` step. `SHOW` records which preview state represents the scenario outcome; it does not make the state executable.
 
-## Asset Instance Properties
+## Elements
 
-Each item in `assets` and each child in an instance's `slots` list is an asset instance mapping:
+Each item in `elements`, and each child in a template Element's `slots`, is an Element mapping. Every Element requires a unique `id` within its Screen and a `type` of `text`, `image`, or `template`.
+
+Common properties:
 
 | Property | Type | Required | Definition |
 |---|---|---:|---|
-| `asset-template` | string | Yes | ID of an asset template listed in `project.yml`. |
-| `name` | string | No | Name for this use of the asset. |
-| `description` | string | No | Description of this use of the asset. |
-| `note` | string | No | Implementation guidance for this instance. |
-| `spec` | string | No | Path to this instance's single Markdown behavior spec under `specs/`, relative to `openux/`. Use `specs/<lowercase-kebab-case-name>.md`. |
-| `attributes` | mapping | No | Instance values for attributes the asset template marks `overridable: true`. |
-| `visibility` | mapping | No | Optional state-specific visibility values, keyed by `preview-states[].id`. A missing state value means visible. The root layout cannot be hidden. |
-| `slots` | mapping | No | Child asset lists keyed by slot IDs declared by the asset template. Each value is a list of asset instances. |
+| `id` | string | Yes | Unique Element ID on this Screen; behavior specs link to it through Markdown front matter. |
+| `type` | string | Yes | One of `text`, `image`, or `template`. |
+| `name` | string | No | Name for this use of the Element. |
+| `description` | string | No | Description of this use of the Element. |
+| `note` | string | No | Implementation guidance for this Element. |
+| `visibility` | mapping | No | Optional state-specific visibility values, keyed by `preview-states[].id`. A missing state value means visible. |
 
-An empty `assets` list represents a new Screen waiting for its root layout. Drag a layout asset onto the empty Screen to set the root. Once a root is added, its template must declare at least one slot. Place child assets in the root layout's slots; do not add additional root items to `assets`. Attribute names, value types, and allowed slot IDs come from the referenced asset template. See [`asset.md`](asset.md) for the asset file schema.
+Type-specific properties:
 
-The optional `spec` property is one path, not a list. Each behavior spec describes intended behavior for that instance; it is Markdown guidance and is not executable. Create or update specs for instances whose behavior is specified by the user or project context. Do not create specs for purely visual instances or invent behavior. See [`spec.md`](spec.md) for its file conventions. Use the Screen and asset descriptions and notes for additional context.
+| Type | Required properties | Optional properties | Definition |
+|---|---|---|---|
+| `text` | `content` | `tag` | `content` is literal text. `tag` is one of `p`, `span`, `h1`–`h6`, `label`, `strong`, or `small`; it defaults to `p`. |
+| `image` | `src`, `alt` | — | `src` is a project-relative path to a discovered image asset. `alt` is a string; use an empty string for a decorative image. |
+| `template` | `src` | `attributes`, `slots` | `src` is a project-relative path to a discovered `.html` template asset. `attributes` contains overrides marked `overridable: true` by that template. `slots` contains child Element lists keyed by the template's declared slot IDs. |
+
+Text and image Elements cannot define template attributes or slots. Template attributes and slot IDs are validated against the referenced template. Any template or image under `screens/<screen-id>/assets/` is limited to that Screen; files under project-level `assets/` are shared.
+
+An empty `elements` list is a valid empty Screen. Add text directly or drag an image or template asset from the file tree. Elements may be arranged at the Screen root or nested in a template's named slots. There is no mandatory root layout.
+
+Element IDs must use lowercase letters, numbers, and hyphens and be unique within the Screen. An Element behavior spec links through the `element-id` YAML front matter and is named `screens/<screen-id>/specs/element-<element-id>.md`; do not add a `spec` property to the Element mapping. Each spec describes intended behavior and is Markdown guidance, not executable. Create or update specs for Elements whose behavior is specified by the user or project context. Do not create specs for purely visual Elements or invent behavior. See [`spec.md`](spec.md) for file conventions.
 
 ## Example
 
@@ -58,22 +64,33 @@ The optional `spec` property is one path, not a list. Each behavior spec describ
 name: Sign In
 description: Sign in to the application.
 note: Keep the page focused on account access.
-assets:
-  - asset-template: centered-form-layout
-    name: Sign-in form
+elements:
+  - id: page-title
+    type: text
+    name: Sign-in heading
+    tag: h1
+    content: Welcome back
+  - id: brand-mark
+    type: image
+    src: assets/brand-mark.svg
+    alt: Northstar
+  - id: sign-in-form
+    type: template
+    src: assets/sign-in-form.html
     slots:
       content:
-        - asset-template: text-field
-          name: Email address
+        - id: email-field
+          type: template
+          src: assets/text-field.html
           attributes:
             label: Email
             input-type: email
             required: true
-        - asset-template: button
-          name: Sign-in button
+        - id: continue-button
+          type: template
+          src: assets/button.html
           attributes:
-            label: Sign in
-          spec: specs/sign-in-button.md
+            label: Continue
 ```
 
 This example keeps a dialog on the same Screen and shows it only in the named preview state:
@@ -85,16 +102,11 @@ preview-states:
   - id: add-item-open
     name: Add item dialog open
     description: Show the Add item dialog over the page.
-spec: specs/home-behavior.md
-assets:
-  - asset-template: page-layout
-    slots:
-      content:
-        - asset-template: page-content
-          name: Page content
-        - asset-template: add-item-dialog
-          name: Add item dialog
-          visibility:
-            default: false
-            add-item-open: true
+elements:
+  - id: add-item-dialog
+    type: template
+    src: assets/add-item-dialog.html
+    visibility:
+      default: false
+      add-item-open: true
 ```

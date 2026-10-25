@@ -1,0 +1,72 @@
+---
+id: dashboard-layout
+name: Dashboard Layout
+description: A responsive application shell with a full-width header, side
+  navigation, and main content area.
+category: Dashboards/Layout
+slots:
+  - id: header
+    name: Header
+  - id: navigation
+    name: Navigation
+  - id: content
+    name: Main content
+---
+<style>
+  .openux-dashboard-shell {
+    box-sizing: border-box;
+    display: grid;
+    grid-template:
+      "header header" 72px
+      "navigation content" minmax(0, 1fr)
+      / 178px minmax(0, 1fr);
+    min-height: 100vh;
+    color: var(--theme-ink, #18243a);
+    background: var(--theme-background, #f4f7fb);
+    font: 14px/1.5 Inter, "Segoe UI", Arial, sans-serif;
+  }
+  .openux-dashboard-header {
+    grid-area: header;
+    z-index: 1;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center;
+    min-width: 0;
+    padding: 0 26px;
+    border-bottom: 1px solid var(--theme-border, #e1e7ef);
+    background: var(--theme-surface, #fff);
+  }
+  .openux-dashboard-navigation {
+    grid-area: navigation;
+    min-width: 0;
+    padding: 18px 12px;
+    border-right: 1px solid var(--theme-border, #e1e7ef);
+    background: var(--theme-surface, #fff);
+  }
+  .openux-dashboard-content {
+    grid-area: content;
+    min-width: 0;
+    padding: 20px;
+  }
+  @media (max-width: 760px) {
+    .openux-dashboard-shell {
+      grid-template:
+        "header" 66px
+        "navigation" auto
+        "content" minmax(0, 1fr)
+        / minmax(0, 1fr);
+    }
+    .openux-dashboard-header { padding: 0 16px; }
+    .openux-dashboard-navigation {
+      padding: 8px 12px;
+      border-right: 0;
+      border-bottom: 1px solid var(--theme-border, #e1e7ef);
+    }
+    .openux-dashboard-content { padding: 20px 14px; }
+  }
+</style>
+<div class="openux-dashboard-shell">
+  <header class="openux-dashboard-header" data-openux-slot="header"></header>
+  <nav class="openux-dashboard-navigation" aria-label="Main navigation" data-openux-slot="navigation"></nav>
+  <main class="openux-dashboard-content" data-openux-slot="content"></main>
+</div>

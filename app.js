@@ -27,8 +27,12 @@ let themeModePreference = "system";
 let systemThemeMode = systemThemeQuery?.matches ? "dark" : "light";
 let appliedThemeTokens = new Set();
 let activeScreenIndex = 0;
+let screenViewMode = "preview";
 const activePreviewStateIds = new Map();
-const expandedScreenIds = new Set();
+const expandedFileDirectories = new Set();
+let fileTreeInitialized = false;
+let projectFilePaths = [];
+let assetFiles = new Map();
 let activeAssetId = null;
 let activeInstancePath = [];
 let viewingAssetTemplate = false;
@@ -39,6 +43,7 @@ let viewingPreviewState = false;
 let activeSpecPath = null;
 let activeSpecInstancePath = [];
 let activeSpecOwner = "instance";
+let activeProjectFilePath = null;
 let assetEditorRestoreId = null;
 let paletteAssetDropHandled = false;
 let reviewedInSession = false;
@@ -49,11 +54,15 @@ let deleteDialogReturnFocus = null;
 const pendingAssetCopies = [];
 const dirtyFiles = new Map();
 const invalidYamlFiles = new Map();
+const pendingAssetSerializations = new Set();
 const createdScreenFiles = new Set();
 const createdSpecFiles = new Set();
 const createdSpecDrafts = new Map();
+const assetSpecOwners = new Map();
 let editVersion = 0;
 let isSaving = false;
+let historyUpdateSuppressed = false;
+let browserHistoryInitialized = false;
 let assetPreviewTimer = null;
 let assetPreviewVersion = 0;
 let editorFieldId = 0;
@@ -85,6 +94,15 @@ function isInstanceVisible(instance, stateId = getActivePreviewStateId()) {
   return instance.visibility?.[stateId] !== false;
 }
 
+function getTemplateByPath(filePath) {
+  return [...assets.values()].find((template) => template.htmlFile === filePath) || null;
+}
+
+function getElementLabel(instance) {
+  const template = instance.type === "template" ? getTemplateByPath(instance.src) : null;
+  return instance.name || template?.data.name || instance.id || instance.type || "Element";
+}
+
 function renderPreviewStateControls(screen) {
   const toolbar = byId("preview-state-toolbar");
   const select = byId("preview-state-select");
@@ -106,6 +124,123 @@ function renderPreviewStateControls(screen) {
 
 function hidePreviewStateControls() {
   byId("preview-state-toolbar").hidden = true;
+  screenViewMode = "preview";
+  byId("screen-view-preview").setAttribute("aria-pressed", "true");
+  byId("screen-view-yaml").setAttribute("aria-pressed", "false");
+  byId("preview-state-controls").hidden = false;
+  byId("screen-preview").hidden = false;
+  byId("screen-yaml-editor-panel").hidden = true;
+  byId("screen-yaml-source").oninput = null;
+}
+
+function setScreenYamlStatus(screen, message, isError = false) {
+  screen.yamlStatusMessage = message;
+  screen.yamlStatusError = isError;
+  if (screens[activeScreenIndex] !== screen) return;
+  const status = byId("screen-yaml-status");
+  status.textContent = message;
+  status.classList.toggle("error", isError);
+}
+
+function syncScreenViewMode() {
+  const yamlSelected = screenViewMode === "yaml";
+  byId("screen-view-preview").setAttribute("aria-pressed", String(!yamlSelected));
+  byId("screen-view-yaml").setAttribute("aria-pressed", String(yamlSelected));
+  byId("preview-state-controls").hidden = yamlSelected;
+  byId("screen-preview").hidden = yamlSelected;
+  byId("screen-yaml-editor-panel").hidden = !yamlSelected;
+  const screen = screens[activeScreenIndex];
+  const editor = byId("screen-yaml-source");
+  if (!screen) {
+    editor.value = "";
+    return;
+  }
+  editor.value = screen.yamlSource || "";
+  editor.setAttribute("aria-label", `YAML source for ${screen.data.name || screen.id}`);
+  byId("screen-yaml-status").textContent = screen.yamlStatusMessage || "";
+  byId("screen-yaml-status").classList.toggle("error", screen.yamlStatusError === true);
+  if (yamlSelected && screen.yamlSourceMode === "data") {
+    prepareScreenYamlSource(screen).catch((error) => {
+      setScreenYamlStatus(screen, `Could not generate Screen YAML: ${error.message || String(error)}`, true);
+    });
+  }
+}
+
+async function setScreenViewMode(mode) {
+  if (mode !== "preview" && mode !== "yaml") return;
+  screenViewMode = mode;
+  syncScreenViewMode();
+}
+
+async function prepareScreenYamlSource(screen) {
+  const version = ++screen.yamlSerializeVersion;
+  setScreenYamlStatus(screen, "Preparing YAML source...");
+  const response = await fetch("/api/yaml/stringify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data: screen.data })
+  });
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.error || `YAML serialization failed (HTTP ${response.status}).`);
+  }
+  if (version !== screen.yamlSerializeVersion || screen.yamlSourceMode !== "data") return;
+  screen.yamlSource = result.source;
+  screen.yamlSourceMode = "generated";
+  setScreenYamlStatus(screen, "YAML source is ready.");
+  if (screens[activeScreenIndex] === screen && screenViewMode === "yaml") {
+    byId("screen-yaml-source").value = result.source;
+  }
+}
+
+function configureScreenYamlEditor(screen) {
+  const editor = byId("screen-yaml-source");
+  editor.value = screen.yamlSource || "";
+  editor.setAttribute("aria-label", `YAML source for ${screen.data.name || screen.id}`);
+  editor.oninput = () => {
+    const source = editor.value;
+    screen.yamlSource = source;
+    screen.yamlSourceMode = "source";
+    const version = ++screen.yamlParseVersion;
+    invalidYamlFiles.set(screen.file, "Validating Screen YAML...");
+    setScreenYamlStatus(screen, "Validating YAML...");
+    markEdited(screen.file, { yamlSource: true });
+    clearTimeout(screen.yamlTimer);
+    screen.yamlTimer = setTimeout(() => {
+      parseScreenYaml(screen, source, version).catch((error) => {
+        if (version !== screen.yamlParseVersion) return;
+        const message = error.message || String(error);
+        invalidYamlFiles.set(screen.file, message);
+        setScreenYamlStatus(screen, `Invalid Screen YAML: ${message}`, true);
+        updateSaveControls();
+      });
+    }, 250);
+  };
+}
+
+async function parseScreenYaml(screen, source, version) {
+  const response = await fetch("/api/yaml/parse", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source })
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || `YAML parsing failed (HTTP ${response.status}).`);
+  if (version !== screen.yamlParseVersion) return;
+  const data = result.data;
+  if (!data || Array.isArray(data) || typeof data !== "object") {
+    throw new Error(`${screen.file} must contain a YAML mapping.`);
+  }
+  sharedValidation.validatePreviewStates(data, screen.file);
+  screen.data = data;
+  screen.yamlSource = source;
+  screen.yamlSourceMode = "source";
+  invalidYamlFiles.delete(screen.file);
+  setScreenYamlStatus(screen, "YAML is valid. Save to persist changes.");
+  renderNavigation();
+  updateSaveControls();
+  const screenIndex = screens.indexOf(screen);
+  if (screenIndex === activeScreenIndex) await renderScreen(screenIndex);
 }
 
 function renamePreviewState(stateId, name) {
@@ -179,9 +314,8 @@ function renderScreenInstanceTree(panel, instances, parentPath = [], depth = 0, 
   if (!Array.isArray(instances)) return;
   instances.forEach((instance, index) => {
     const path = parentPath.length ? [...parentPath, index] : [index];
-    const template = assets.get(instance["asset-template"]);
-    const label = instance.name || template?.data.name || instance["asset-template"];
-    const visible = path.length === 1 || isInstanceVisible(instance, stateId);
+    const label = getElementLabel(instance);
+    const visible = isInstanceVisible(instance, stateId);
     const button = element(
       "button",
       "instance-tree-button",
@@ -190,7 +324,7 @@ function renderScreenInstanceTree(panel, instances, parentPath = [], depth = 0, 
     button.type = "button";
     button.style.paddingLeft = `${10 + depth * 14}px`;
     button.setAttribute("aria-label", `Select ${label}; ${visible ? "visible" : "hidden"} in this preview state`);
-    button.addEventListener("click", () => selectInstance(path, instance["asset-template"]));
+    button.addEventListener("click", () => selectInstance(path, instance.src || null));
     panel.append(button);
     for (const [slotId, children] of Object.entries(instance.slots || {})) {
       if (!Array.isArray(children)) continue;
@@ -209,7 +343,7 @@ async function deletePreviewState(stateId) {
   const keepPreviewStateSelected = viewingPreviewState;
   const wasActive = activePreviewStateIds.get(screen.id) === stateId;
   screen.data["preview-states"] = states.filter((candidate) => candidate.id !== stateId);
-  screen.data.assets.forEach((instance) => removeStateVisibility(instance, stateId));
+  screen.data.elements.forEach((instance) => removeStateVisibility(instance, stateId));
   if (wasActive) {
     activePreviewStateIds.set(screen.id, "default");
   }
@@ -217,7 +351,7 @@ async function deletePreviewState(stateId) {
   await renderScreen(activeScreenIndex, { previewStateSelected: keepPreviewStateSelected });
   if (keepPreviewStateSelected) return;
   const instance = getInstanceAtPath(screen, instancePath);
-  if (instance) selectInstance(instancePath, instance["asset-template"]);
+  if (instance) selectInstance(instancePath, instance.src || null);
 }
 
 function safeProjectUrl(path, base = appRoot) {
@@ -243,28 +377,114 @@ async function loadText(path, base = appRoot) {
 }
 
 async function loadYaml(path) {
-  const parsed = parseOpenuxYaml(await loadText(path));
+  return parseYamlMapping(await loadText(path), path);
+}
+
+async function parseYamlSource(source, context) {
+  const response = await fetch("/api/yaml/parse", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source })
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(`${context}: ${result.error || `YAML parsing failed (HTTP ${response.status}).`}`);
+  return result.data;
+}
+
+function parseYamlMapping(source, path) {
+  const parsed = parseOpenuxYaml(source);
   if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
     throw new Error(`${path} must contain a YAML mapping.`);
   }
   return parsed;
 }
 
-function collectInstanceSpecPaths(instance, paths = new Set()) {
-  if (!instance || typeof instance !== "object" || Array.isArray(instance)) return paths;
-  if (Object.hasOwn(instance, "interactions")) {
-    throw new Error("Screen asset interactions are no longer supported; describe behavior in an instance-linked Markdown spec.");
+async function loadProjectFilePaths() {
+  const response = await fetch("/api/files");
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.error || `Could not list project files (HTTP ${response.status}).`);
   }
-  if (instance.spec !== undefined) {
-    sharedValidation.validateSpecPath(instance.spec);
-    paths.add(instance.spec);
+  if (!Array.isArray(result.files) || result.files.some((filePath) =>
+    typeof filePath !== "string" || !filePath || filePath.startsWith("/") || filePath.includes("\\") ||
+    filePath.split("/").some((segment) =>
+      !segment || segment === "." || segment === ".." || segment.startsWith(".")
+    )
+  )) {
+    throw new Error("The project file listing is invalid.");
   }
-  for (const children of Object.values(instance.slots || {})) {
-    if (Array.isArray(children)) {
-      for (const child of children) collectInstanceSpecPaths(child, paths);
+  return result.files;
+}
+
+function validateScreenAssetIds(screen) {
+  const ids = new Set();
+  function visit(instances, parentPath = []) {
+    for (let index = 0; index < instances.length; index += 1) {
+      const instance = instances[index];
+      const location = `${screen.file} elements${parentPath
+        .map((part) => typeof part === "number" ? `[${part}]` : `.${part}`)
+        .join("")}[${index}]`;
+      if (!instance || typeof instance !== "object" || Array.isArray(instance)) {
+        throw new Error(`${location}: Element must be a mapping.`);
+      }
+      sharedValidation.validateElementId(instance.id, location);
+      if (ids.has(instance.id)) {
+        throw new Error(`${location}: Element id "${instance.id}" is already used on this Screen.`);
+      }
+      ids.add(instance.id);
+      if (Object.hasOwn(instance, "spec")) {
+        throw new Error(`${location}: Element behavior specs are linked by Markdown front matter "element-id", not a Screen YAML spec property.`);
+      }
+      if (Object.hasOwn(instance, "interactions")) {
+        throw new Error(`${location}: interactions are no longer supported; describe behavior in the Element's Markdown spec.`);
+      }
+      for (const [slotId, children] of Object.entries(instance.slots || {})) {
+        if (Array.isArray(children)) visit(children, [...parentPath, index, slotId]);
+      }
     }
   }
-  return paths;
+  if (Array.isArray(screen.data.elements)) visit(screen.data.elements);
+}
+
+function findInstancePathById(instances, assetId, parentPath = []) {
+  for (let index = 0; index < instances.length; index += 1) {
+    const instance = instances[index];
+    const instancePath = [...parentPath, index];
+    if (instance.id === assetId) return instancePath;
+    for (const [slotId, children] of Object.entries(instance.slots || {})) {
+      if (!Array.isArray(children)) continue;
+      const childPath = findInstancePathById(children, assetId, [...instancePath, slotId]);
+      if (childPath) return childPath;
+    }
+  }
+  return null;
+}
+
+function refreshAssetSpecOwner(filePath, source) {
+  assetSpecOwners.delete(filePath);
+  const screen = screens.find((entry) =>
+    filePath.startsWith(`screens/${entry.id}/specs/element-`)
+  );
+  if (!screen) return null;
+  const elementId = sharedValidation.validateElementSpecHeader(source, filePath);
+  sharedValidation.validateElementSpecPath(filePath, elementId);
+  const instancePath = findInstancePathById(screen.data.elements || [], elementId);
+  if (!instancePath) return null;
+  for (const [otherPath, owner] of assetSpecOwners) {
+    if (otherPath !== filePath && owner.screenFile === screen.file && owner.elementId === elementId) {
+      throw new Error(`${filePath}: Element "${elementId}" already has behavior spec "${otherPath}".`);
+    }
+  }
+  const owner = { screenFile: screen.file, elementId, instancePath };
+  assetSpecOwners.set(filePath, owner);
+  return owner;
+}
+
+function getAssetSpecPath(screen, instance) {
+  for (const [filePath, owner] of assetSpecOwners) {
+    if (owner.screenFile === screen.file && owner.elementId === instance.id) return filePath;
+  }
+  return null;
 }
 
 function assetCategoryPath(template, source) {
@@ -331,9 +551,17 @@ async function loadProject(selectionToRestore = null) {
     clearTimeout(template.yamlTimer);
     template.yamlParseVersion += 1;
   }
+  for (const screen of screens) {
+    clearTimeout(screen.yamlTimer);
+    screen.yamlParseVersion += 1;
+    screen.yamlSerializeVersion += 1;
+  }
+  screenViewMode = "preview";
   createdScreenFiles.clear();
   createdSpecFiles.clear();
   createdSpecDrafts.clear();
+  assetSpecOwners.clear();
+  activeProjectFilePath = null;
   pendingAssetCopies.length = 0;
   setPreviewMessage("loading", "Reading project files...");
   try {
@@ -341,48 +569,67 @@ async function loadProject(selectionToRestore = null) {
     if (typeof project.openux !== "string" || !project.openux) {
       throw new Error("project.yml must specify the OpenUX version in openux.");
     }
-    if (!Array.isArray(project.screens) || !Array.isArray(project.assets)) {
-      throw new Error("project.yml must list screens and assets.");
+    if (!Array.isArray(project.screens)) {
+      throw new Error("project.yml must list screens.");
     }
     if (Object.hasOwn(project, "workflows")) {
-      throw new Error("project.yml workflows are no longer supported; use project.spec or an asset instance's spec.");
+      throw new Error("project.yml workflows are no longer supported; use project.spec, a Screen spec, or an Asset's spec.");
     }
+    projectFilePaths = await loadProjectFilePaths();
+    assetFiles = new Map(projectFilePaths
+      .filter((filePath) => /^(?:assets|screens\/[a-z][a-z0-9-]*\/assets)\//.test(filePath))
+      .map((filePath) => {
+        const extension = filePath.slice(filePath.lastIndexOf(".")).toLowerCase();
+        const type = extension === ".html"
+          ? "template"
+          : [".avif", ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".png", ".svg", ".webp"].includes(extension)
+            ? "image"
+            : "resource";
+        return [filePath, type];
+      }));
 
     const [loadedScreens, loadedAssets, loadedTheme] = await Promise.all([
-      Promise.all(project.screens.map(async (entry) => ({
-        id: entry.id,
-        file: entry.file,
-        data: await loadYaml(entry.file)
-      }))),
-      Promise.all(project.assets.map(async (entry) => {
-        const directory = entry.directory.replace(/\/+$/, "");
-        const base = safeProjectUrl(`${directory}/`);
-        const data = await loadYaml(`${directory}/asset.yml`);
-        if (data.id !== entry.id) {
-          throw new Error(`Asset id mismatch in ${directory}/asset.yml.`);
-        }
-        assetCategoryPath(data, `${directory}/asset.yml`);
-        validateAssetAttributes(data, `${directory}/asset.yml`);
-        validateAssetSlots(data, `${directory}/asset.yml`);
-        const htmlPath = data.render?.source || "asset.html";
-        const [html, yamlSource] = await Promise.all([
-          loadText(htmlPath, base),
-          loadText("asset.yml", base)
-        ]);
-        validateAssetSlotMarkup(data, html, `${directory}/${htmlPath}`);
+      Promise.all(project.screens.map(async (entry) => {
+        const yamlSource = await loadText(entry.file);
         return {
           id: entry.id,
-          screen: entry.screen,
-          copiedFrom: entry["copied-from"],
-          directory,
-          base,
-          data,
-          htmlFile: `${directory}/${htmlPath}`,
+          file: entry.file,
+          data: parseYamlMapping(yamlSource, entry.file),
           yamlSource,
           yamlSourceMode: "source",
           yamlParseVersion: 0,
           yamlSerializeVersion: 0,
-          html
+          yamlTimer: null
+        };
+      })),
+      Promise.all([...assetFiles]
+        .filter(([, type]) => type === "template")
+        .map(async ([htmlFile]) => {
+        const directory = htmlFile.slice(0, htmlFile.lastIndexOf("/"));
+        const base = safeProjectUrl(`${directory}/`);
+        const documentSource = await loadText(htmlFile);
+        const { header, body } = sharedValidation.splitAssetDocument(documentSource, htmlFile);
+        const data = await parseYamlSource(header, `${htmlFile} front matter`);
+        sharedValidation.validateAssetTemplateHeader(data, htmlFile);
+        if (data.id !== htmlFile.slice(htmlFile.lastIndexOf("/") + 1, -5)) {
+          throw new Error(`Asset id must match the filename in ${htmlFile}.`);
+        }
+        assetCategoryPath(data, `${htmlFile} front matter`);
+        validateAssetAttributes(data, `${htmlFile} front matter`);
+        validateAssetSlots(data, `${htmlFile} front matter`);
+        validateAssetSlotMarkup(data, body, htmlFile);
+        return {
+          id: data.id,
+          screen: htmlFile.match(/^screens\/([^/]+)\/assets\//)?.[1] || null,
+          base,
+          data,
+          htmlFile,
+          documentSource,
+          yamlSource: header,
+          yamlSourceMode: "source",
+          yamlParseVersion: 0,
+          yamlSerializeVersion: 0,
+          html: body
         };
       })),
       (async () => {
@@ -410,18 +657,22 @@ async function loadProject(selectionToRestore = null) {
     screens = loadedScreens;
     activePreviewStateIds.clear();
     assets = new Map(loadedAssets.map((asset) => [asset.id, asset]));
-    for (const asset of loadedAssets) {
-      if (asset.screen !== undefined && !screens.some((screen) => screen.id === asset.screen)) {
-        throw new Error(`Asset "${asset.id}" references unknown Screen "${asset.screen}".`);
-      }
-    }
+    if (assets.size !== loadedAssets.length) throw new Error("Discovered template ids must be unique.");
     const specPaths = new Set();
+    const elementSpecPaths = [];
     for (const screen of screens) {
+      validateScreenAssetIds(screen);
       if (screen.data.spec !== undefined) {
         sharedValidation.validateSpecPath(screen.data.spec);
         specPaths.add(screen.data.spec);
       }
-      for (const instance of screen.data.assets || []) collectInstanceSpecPaths(instance, specPaths);
+      const elementSpecPrefix = `screens/${screen.id}/specs/element-`;
+      for (const filePath of projectFilePaths) {
+        if (!filePath.startsWith(elementSpecPrefix) || !filePath.endsWith(".md")) continue;
+        sharedValidation.validateSpecPath(filePath);
+        elementSpecPaths.push(filePath);
+        specPaths.add(filePath);
+      }
     }
     if (project.spec !== undefined) {
       sharedValidation.validateSpecPath(project.spec);
@@ -430,6 +681,9 @@ async function loadProject(selectionToRestore = null) {
     specSources = new Map(await Promise.all([...specPaths].map(async (filePath) =>
       [filePath, await loadText(filePath)]
     )));
+    for (const filePath of elementSpecPaths) {
+      refreshAssetSpecOwner(filePath, specSources.get(filePath));
+    }
     theme = loadedTheme.data;
     themeStylesheet = loadedTheme.stylesheet;
     themeStylesheetBase = loadedTheme.stylesheetBase;
@@ -443,12 +697,13 @@ async function loadProject(selectionToRestore = null) {
     hasEdits = false;
     dirtyFiles.clear();
     invalidYamlFiles.clear();
+    pendingAssetSerializations.clear();
     byId("create-screen").disabled = false;
-    byId("project-nav").disabled = false;
     updateSaveControls();
     reviewedInSession = false;
     applyTheme();
     renderNavigation();
+    renderScreenSelector();
     if (isRenderOnly) {
       const renderIndex = screens.findIndex((screen) => screen.id === renderRequestedScreen);
       if (renderIndex < 0) throw new Error(`Unknown Screen "${renderRequestedScreen}".`);
@@ -475,7 +730,15 @@ async function loadProject(selectionToRestore = null) {
         document.body.dataset.openuxRenderHtml = encodeBase64(standaloneScreenHtml());
       }
     } else if (selectionToRestore) {
-      await restoreUiSelection(selectionToRestore);
+      const wasHistoryUpdateSuppressed = historyUpdateSuppressed;
+      const restoringUrl = selectionToRestore.view === "url";
+      if (restoringUrl) historyUpdateSuppressed = true;
+      try {
+        await restoreUiSelection(selectionToRestore);
+      } finally {
+        historyUpdateSuppressed = wasHistoryUpdateSuppressed;
+        if (restoringUrl && !wasHistoryUpdateSuppressed) syncBrowserHistory(true);
+      }
     } else {
       await renderScreen(0);
     }
@@ -532,7 +795,13 @@ function currentUiSelection() {
     file: screen.file
   } : null;
   if (viewingProject) return { view: "project", screen: screenContext };
-  if (viewingTheme) return { view: "theme", screen: screenContext, file: project?.theme || null };
+  if (viewingTheme) {
+    return {
+      view: "theme",
+      screen: screenContext,
+      file: activeProjectFilePath || project?.theme || null
+    };
+  }
   if (viewingSpec) {
     return {
       view: "spec",
@@ -552,33 +821,187 @@ function currentUiSelection() {
       asset: template ? {
         id: template.id,
         name: template.data.name || template.id,
-        directory: template.directory,
-        manifestFile: `${template.directory}/asset.yml`,
-        htmlFile: template.htmlFile
+        file: activeProjectFilePath || template.htmlFile
       } : null
     };
   }
-  const instance = screen && activeAssetId ? getInstanceAtPath(screen, activeInstancePath) : null;
-  const template = activeAssetId ? assets.get(activeAssetId) : null;
+  const instance = screen && activeInstancePath.length
+    ? getInstanceAtPath(screen, activeInstancePath)
+    : null;
+  const template = instance?.type === "template" ? getTemplateByPath(instance.src) : null;
   return {
     view: "screen",
     screen: screenContext,
-    selectedAsset: instance && template ? {
-      id: template.id,
-      name: instance.name || template.data.name || template.id,
+    selectedAsset: instance ? {
+      id: instance.id,
+      name: getElementLabel(instance),
       instancePath: activeInstancePath,
       instance,
-      template: {
+      ...(template ? { template: {
         name: template.data.name || template.id,
         description: template.data.description || "",
         attributes: template.data.attributes || {},
         slots: template.data.slots || []
-      }
+      } } : {})
     } : null
   };
 }
 
+function getSelectionFilePath(selection) {
+  if (selection.view === "project") return "project.yml";
+  if (selection.view === "theme") return selection.file || project?.theme || null;
+  if (selection.view === "spec") return selection.spec?.file || null;
+  if (selection.view === "asset-template") {
+    return selection.asset?.file || selection.asset?.htmlFile || null;
+  }
+  return selection.screen?.file || screens[activeScreenIndex]?.file || null;
+}
+
+function createHistorySelection(selection) {
+  const snapshot = { view: selection.view };
+  if (selection.screen?.id) snapshot.screen = { id: selection.screen.id };
+  if (selection.view === "theme") snapshot.file = selection.file;
+  if (selection.view === "spec" && selection.spec) {
+    snapshot.spec = {
+      file: selection.spec.file,
+      owner: selection.spec.owner,
+      ...(Array.isArray(selection.spec.instancePath)
+        ? { instancePath: [...selection.spec.instancePath] }
+        : {})
+    };
+  }
+  if (selection.view === "asset-template" && selection.asset) {
+    snapshot.asset = {
+      id: selection.asset.id,
+      file: selection.asset.file
+    };
+  }
+  if (selection.selectedAsset?.instancePath) {
+    snapshot.selectedAsset = { instancePath: [...selection.selectedAsset.instancePath] };
+  }
+  return snapshot;
+}
+
+function selectionFromLocation() {
+  const parameters = new URLSearchParams(window.location.search);
+  const file = parameters.get("file");
+  if (!file) return null;
+  let instancePath = null;
+  const encodedInstancePath = parameters.get("instancePath");
+  if (encodedInstancePath) {
+    try {
+      const parsed = JSON.parse(encodedInstancePath);
+      if (Array.isArray(parsed) && parsed.every((part) =>
+        typeof part === "string" || (Number.isInteger(part) && part >= 0)
+      )) {
+        instancePath = parsed;
+      }
+    } catch {
+      instancePath = null;
+    }
+  }
+  return {
+    view: "url",
+    file,
+    requestedView: parameters.get("view"),
+    screen: parameters.get("screen") ? { id: parameters.get("screen") } : null,
+    owner: parameters.get("owner"),
+    instancePath,
+    assetId: parameters.get("assetId")
+  };
+}
+
+function syncBrowserHistory(forceReplace = false) {
+  if (isRenderOnly || historyUpdateSuppressed) return;
+  const selection = currentUiSelection();
+  const filePath = getSelectionFilePath(selection);
+  if (!filePath) return;
+
+  const url = new URL(window.location.href);
+  url.searchParams.set("file", filePath);
+  url.searchParams.set("view", selection.view);
+  if (selection.screen?.id) url.searchParams.set("screen", selection.screen.id);
+  else url.searchParams.delete("screen");
+  if (selection.view === "spec" && selection.spec?.owner) {
+    url.searchParams.set("owner", selection.spec.owner);
+  } else {
+    url.searchParams.delete("owner");
+  }
+  const instancePath = selection.spec?.instancePath || selection.selectedAsset?.instancePath;
+  if (Array.isArray(instancePath)) {
+    url.searchParams.set("instancePath", JSON.stringify(instancePath));
+  } else {
+    url.searchParams.delete("instancePath");
+  }
+  if (selection.view === "asset-template" && selection.asset?.id) {
+    url.searchParams.set("assetId", selection.asset.id);
+  } else {
+    url.searchParams.delete("assetId");
+  }
+
+  const state = history.state && typeof history.state === "object"
+    ? { ...history.state }
+    : {};
+  state.openuxEditor = {
+    file: filePath,
+    selection: createHistorySelection(selection)
+  };
+  const previousFile = new URL(window.location.href).searchParams.get("file");
+  if (!browserHistoryInitialized || forceReplace || previousFile === filePath) {
+    history.replaceState(state, "", url);
+  } else {
+    history.pushState(state, "", url);
+  }
+  browserHistoryInitialized = true;
+}
+
+async function restoreUrlSelection(selection) {
+  const action = getProjectFileAction(selection.file);
+  if (action) {
+    await openProjectFile(selection.file);
+    if (action.kind === "screen" && Array.isArray(selection.instancePath)) {
+      const screen = screens[action.screenIndex];
+      const instance = screen && getInstanceAtPath(screen, selection.instancePath);
+      if (instance) selectInstance(selection.instancePath, instance.src || null);
+    }
+    return;
+  }
+  if (selection.requestedView !== "spec") {
+    await renderScreen(0);
+    return;
+  }
+  if (selection.owner === "project") {
+    renderProjectOverview();
+    await createProjectSpec();
+    return;
+  }
+  const screenIndex = screens.findIndex((screen) =>
+    screen.id === selection.screen?.id
+  );
+  if (screenIndex < 0) {
+    await renderScreen(0);
+    return;
+  }
+  await renderScreen(screenIndex);
+  if (selection.owner === "screen") {
+    await createSpecForScreen();
+    return;
+  }
+  const screen = screens[screenIndex];
+  if (selection.owner === "instance" &&
+      Array.isArray(selection.instancePath) &&
+      getInstanceAtPath(screen, selection.instancePath)) {
+    await createSpecForInstance(selection.instancePath);
+    return;
+  }
+  await renderScreen(0);
+}
+
 async function restoreUiSelection(selection) {
+  if (selection.view === "url") {
+    await restoreUrlSelection(selection);
+    return;
+  }
   const screenIndex = screens.findIndex((screen) => screen.id === selection.screen?.id);
   activeScreenIndex = screenIndex >= 0 ? screenIndex : 0;
   if (selection.view === "project") {
@@ -586,36 +1009,55 @@ async function restoreUiSelection(selection) {
     return;
   }
   if (selection.view === "theme") {
-    byId("theme-nav").click();
+    renderThemeView(selection.file || project?.theme);
     return;
   }
   if (selection.view === "asset-template" && assets.has(selection.asset?.id)) {
-    await renderAssetTemplate(selection.asset.id);
+    await renderAssetTemplate(selection.asset.id, selection.asset.file);
     return;
   }
   if (selection.view === "spec" && selection.spec?.owner === "project") {
-    if (project.spec === selection.spec.file) {
-      renderProjectOverview();
+    renderProjectOverview();
+    const draft = createdSpecDrafts.get(selection.spec.file);
+    if (project.spec === selection.spec.file || draft?.owner === "project") {
       await renderSpecEditor(selection.spec.file, [], "project");
     } else {
-      renderProjectOverview();
+      await createProjectSpec();
     }
     return;
   }
   await renderScreen(activeScreenIndex);
   if (selection.view === "spec") {
     const screen = screens[activeScreenIndex];
+    if (!screen) return;
     const instancePath = selection.spec?.instancePath;
+    if (selection.spec?.owner === "screen") {
+      const draft = createdSpecDrafts.get(selection.spec.file);
+      if (screen.data.spec === selection.spec.file ||
+          (draft?.owner === "screen" && draft.screenFile === screen.file)) {
+        await renderSpecEditor(selection.spec.file, [], "screen");
+      } else {
+        await createSpecForScreen();
+      }
+      return;
+    }
     const instance = Array.isArray(instancePath) && screen
       ? getInstanceAtPath(screen, instancePath)
       : null;
+    const assetSpecOwner = typeof selection.spec?.file === "string"
+      ? assetSpecOwners.get(selection.spec.file)
+      : null;
+    const draft = createdSpecDrafts.get(selection.spec?.file);
     if (instance && typeof selection.spec?.file === "string" &&
-        instance.spec === selection.spec.file) {
+        ((assetSpecOwner?.screenFile === screen.file &&
+          sameInstancePath(assetSpecOwner.instancePath, instancePath)) ||
+         (draft?.owner === "instance" && draft.screenFile === screen.file &&
+          sameInstancePath(draft.instancePath, instancePath)))) {
       await renderSpecEditor(selection.spec.file, instancePath);
       return;
     }
     if (instance) {
-      selectInstance(instancePath, instance["asset-template"]);
+      await createSpecForInstance(instancePath);
       return;
     }
   }
@@ -623,7 +1065,7 @@ async function restoreUiSelection(selection) {
   if (Array.isArray(instancePath)) {
     const screen = screens[activeScreenIndex];
     const instance = screen && getInstanceAtPath(screen, instancePath);
-    if (instance) selectInstance(instancePath, instance["asset-template"]);
+    if (instance) selectInstance(instancePath, instance.src || null);
   }
 }
 
@@ -655,161 +1097,325 @@ function applyTheme() {
   }
   appliedThemeTokens = colorNames;
   byId("screen-preview").style.colorScheme = getActiveThemeMode();
-  byId("theme-name").textContent = theme.name || "Theme";
 }
 
 function renderNavigation() {
   if (!viewingAssetTemplate && !viewingTheme && !viewingProject && !viewingSpec) {
     byId("breadcrumb").textContent = "Screens";
   }
-  const screenNav = byId("screen-nav");
-  const assetNav = byId("asset-nav");
-  screenNav.replaceChildren();
-  assetNav.replaceChildren();
-
-  screens.forEach((screen, index) => {
-    const screenName = screen.data.name || screen.id;
-    const pageAssets = [...assets.values()].filter((asset) => asset.screen === screen.id);
-    const group = element("div", "screen-nav-group");
-    const row = element("div", "screen-nav-row");
-    const button = element("button", "side-item screen-option");
-    button.type = "button";
-    button.dataset.screenIndex = String(index);
-    button.dataset.openuxScreenId = screen.id;
-    button.dataset.openuxScreenName = screenName;
-    button.append(element("span", "side-icon", "S"));
-    button.append(element("span", "screen-option-name", screenName));
-    button.addEventListener("click", () => renderScreen(index));
-    row.append(button);
-
-    const expandButton = element("button", "screen-expand-button");
-    expandButton.id = `screen-expand-${screen.id}`;
-    expandButton.type = "button";
-    expandButton.setAttribute("aria-expanded", String(expandedScreenIds.has(screen.id)));
-    expandButton.setAttribute("aria-controls", `screen-assets-${screen.id}`);
-    expandButton.setAttribute(
-      "aria-label",
-      `${expandedScreenIds.has(screen.id) ? "Hide" : "Show"} page-specific assets for ${screenName}`
-    );
-    expandButton.addEventListener("click", () =>
-      setScreenExpanded(screen.id, !expandedScreenIds.has(screen.id))
-    );
-    row.append(expandButton);
-    group.append(row);
-
-    const pageAssetPanel = element("div", "screen-assets");
-    pageAssetPanel.id = `screen-assets-${screen.id}`;
-    pageAssetPanel.hidden = !expandedScreenIds.has(screen.id);
-    pageAssetPanel.setAttribute("role", "group");
-    pageAssetPanel.setAttribute("aria-label", `${screenName} page-specific assets`);
-    if (pageAssets.length) {
-      const library = element("div", "asset-library");
-      library.append(...renderAssetCategories(pageAssets));
-      pageAssetPanel.append(library);
-    } else {
-      pageAssetPanel.append(element("div", "asset-hint", "No page-specific templates."));
-    }
-    group.append(pageAssetPanel);
-    screenNav.append(group);
-  });
-
-  const sharedAssets = [...assets.values()].filter((asset) => asset.screen === undefined);
-  if (sharedAssets.length) {
-    byId("asset-library-label").hidden = false;
-    assetNav.hidden = false;
-    assetNav.append(...renderAssetCategories(sharedAssets));
-  } else {
-    byId("asset-library-label").hidden = true;
-    assetNav.hidden = true;
+  const activeFilePath = activeProjectFilePath || (viewingSpec
+    ? activeSpecPath
+    : viewingTheme
+      ? project?.theme
+      : viewingProject
+        ? "project.yml"
+        : viewingAssetTemplate
+          ? assets.get(activeAssetId)?.htmlFile
+          : screens[activeScreenIndex]?.file);
+  if (activeFilePath) expandFilePath(activeFilePath);
+  const tree = buildProjectFileTree(getProjectTreeFilePaths());
+  if (!fileTreeInitialized) {
+    addDefaultExpandedDirectories(tree, "", 0);
+    fileTreeInitialized = true;
   }
+  byId("project-file-tree").replaceChildren(...renderFileTreeContents(tree, ""));
   updateNavigationSelection();
 }
 
-function setScreenExpanded(screenId, expanded) {
-  if (expanded) expandedScreenIds.add(screenId);
-  else expandedScreenIds.delete(screenId);
-  const button = byId(`screen-expand-${screenId}`);
-  const panel = byId(`screen-assets-${screenId}`);
-  if (!button || !panel) return;
-  button.setAttribute("aria-expanded", String(expanded));
+function renderScreenSelector() {
+  const toggle = byId("screen-selector-toggle");
+  const optionsContainer = byId("screen-selector-options");
+  const search = byId("screen-selector-search");
+  const query = search.value.trim().toLocaleLowerCase();
+  const matches = screens
+    .map((screen, index) => ({ screen, index }))
+    .filter(({ screen }) =>
+      `${screen.data.name || screen.id} ${screen.id}`.toLocaleLowerCase().includes(query)
+    );
+
+  toggle.disabled = screens.length === 0;
+  toggle.setAttribute(
+    "aria-label",
+    screens.length
+      ? `Choose a Screen; current Screen: ${screens[activeScreenIndex]?.data.name || screens[activeScreenIndex]?.id}`
+      : "No Screens available"
+  );
+  optionsContainer.replaceChildren(...matches.map(({ screen, index }) => {
+    const name = screen.data.name || screen.id;
+    const option = element("button", "screen-selector-option");
+    option.type = "button";
+    option.id = `screen-selector-option-${screen.id}`;
+    option.setAttribute("role", "option");
+    option.setAttribute("aria-selected", String(index === activeScreenIndex));
+    option.setAttribute("aria-label", `Open Screen ${name} (${screen.id})`);
+    option.append(element("span", "screen-selector-option-name", name));
+    option.append(element("span", "screen-selector-option-id", screen.id));
+    option.addEventListener("click", () => {
+      setScreenSelectorOpen(false, true);
+      renderScreen(index).catch(showFatalError);
+    });
+    return option;
+  }));
+  byId("screen-selector-no-results").hidden = matches.length > 0;
+}
+
+function setScreenSelectorOpen(open, restoreFocus = false) {
+  const toggle = byId("screen-selector-toggle");
+  const panel = byId("screen-selector-panel");
+  const search = byId("screen-selector-search");
+  panel.hidden = !open;
+  toggle.setAttribute("aria-expanded", String(open));
+  search.value = "";
+  renderScreenSelector();
+  if (open) search.focus();
+  else if (restoreFocus) toggle.focus();
+}
+
+function getProjectTreeFilePaths() {
+  const filePaths = new Set(projectFilePaths);
+  filePaths.add("project.yml");
+  if (project?.theme) filePaths.add(project.theme);
+  if (theme?.styles) {
+    const themeDirectory = project.theme.includes("/")
+      ? project.theme.slice(0, project.theme.lastIndexOf("/") + 1)
+      : "";
+    filePaths.add(`${themeDirectory}${theme.styles}`);
+  }
+  for (const screen of screens) filePaths.add(screen.file);
+  for (const asset of assets.values()) {
+    filePaths.add(asset.htmlFile);
+  }
+  for (const filePath of specSources.keys()) filePaths.add(filePath);
+  for (const filePath of createdSpecDrafts.keys()) filePaths.add(filePath);
+  for (const filePath of createdScreenFiles) filePaths.add(filePath);
+  for (const filePath of createdSpecFiles) filePaths.add(filePath);
+  for (const copy of pendingAssetCopies) {
+    const template = assets.get(copy.targetId);
+    if (template) filePaths.add(template.htmlFile);
+  }
+  return [...filePaths].filter((filePath) =>
+    typeof filePath === "string" && filePath && !filePath.startsWith("/") && !filePath.includes("\\")
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+function buildProjectFileTree(filePaths) {
+  const root = { directories: new Map(), files: [] };
+  for (const filePath of filePaths) {
+    const segments = filePath.split("/");
+    const fileName = segments.pop();
+    let directory = root;
+    for (const segment of segments) {
+      if (!directory.directories.has(segment)) {
+        directory.directories.set(segment, { directories: new Map(), files: [] });
+      }
+      directory = directory.directories.get(segment);
+    }
+    directory.files.push({ name: fileName, path: filePath });
+  }
+  return root;
+}
+
+function addDefaultExpandedDirectories(directory, path, depth) {
+  for (const [name, child] of directory.directories) {
+    const childPath = path ? `${path}/${name}` : name;
+    if (depth < 3) expandedFileDirectories.add(childPath);
+    addDefaultExpandedDirectories(child, childPath, depth + 1);
+  }
+}
+
+function expandFilePath(filePath) {
+  const segments = filePath.split("/");
+  for (let index = 1; index < segments.length; index += 1) {
+    expandedFileDirectories.add(segments.slice(0, index).join("/"));
+  }
+}
+
+function revealProjectFile(filePath) {
+  expandFilePath(filePath);
+  for (const folder of byId("project-file-tree").querySelectorAll(".file-tree-folder")) {
+    if (expandedFileDirectories.has(folder.dataset.directoryPath)) folder.open = true;
+  }
+}
+
+function renderFileTreeContents(directory, parentPath) {
+  const nodes = [];
+  for (const [name, child] of [...directory.directories].sort(([left], [right]) =>
+    left.localeCompare(right)
+  )) {
+    const directoryPath = parentPath ? `${parentPath}/${name}` : name;
+    const details = element("details", "file-tree-folder");
+    details.dataset.directoryPath = directoryPath;
+    details.open = expandedFileDirectories.has(directoryPath);
+    const summary = element("summary", "", name);
+    details.addEventListener("toggle", () => {
+      if (details.open) expandedFileDirectories.add(directoryPath);
+      else expandedFileDirectories.delete(directoryPath);
+    });
+    details.append(summary);
+    const children = element("div", "file-tree-children");
+    children.append(...renderFileTreeContents(child, directoryPath));
+    details.append(children);
+    nodes.push(details);
+  }
+  for (const file of [...directory.files].sort((left, right) =>
+    left.name.localeCompare(right.name)
+  )) {
+    nodes.push(renderProjectFile(file));
+  }
+  return nodes;
+}
+
+function renderProjectFile(file) {
+  const action = getProjectFileAction(file.path);
+  const button = element("button", "file-tree-file");
+  button.type = "button";
+  button.dataset.projectFile = file.path;
+  button.disabled = !action;
+  button.title = action ? `Open ${file.path}` : `${file.path} (not editable in Studio)`;
+  const extension = file.name.includes(".") ? file.name.slice(file.name.lastIndexOf(".") + 1) : "file";
+  button.append(element("span", "file-tree-type", extension));
+  button.append(element("span", "file-tree-name", file.name));
+  if (action?.kind === "screen") {
+    const screen = screens[action.screenIndex];
+    button.dataset.openuxScreenId = screen.id;
+    button.dataset.openuxScreenName = screen.data.name || screen.id;
+    button.setAttribute("aria-label", `Open Screen ${screen.data.name || screen.id} (${file.path})`);
+  }
+  if (action?.kind === "asset") {
+    button.dataset.assetId = action.asset.id;
+    if (file.path === action.asset.htmlFile) configureAssetTemplateDrag(button, action.asset);
+    else updateAssetTemplateTreeFile(button, action.asset);
+  } else if (action?.kind === "image") {
+    configureAssetFileDrag(button, file.path);
+  }
+  if (action) {
+    button.addEventListener("click", () =>
+      openProjectFile(file.path).catch((error) => showEditorMessage("Could not open file", error.message || String(error)))
+    );
+  }
+  return button;
+}
+
+function getProjectFileAction(filePath) {
+  if (filePath === "project.yml") return { kind: "project" };
+  const screenIndex = screens.findIndex((screen) => screen.file === filePath);
+  if (screenIndex >= 0) return { kind: "screen", screenIndex };
+  const themeStylesPath = theme?.styles
+    ? `${project.theme.includes("/") ? project.theme.slice(0, project.theme.lastIndexOf("/") + 1) : ""}${theme.styles}`
+    : null;
+  if (filePath === project?.theme || filePath === themeStylesPath) return { kind: "theme" };
+  for (const asset of assets.values()) {
+    if (filePath === asset.htmlFile) {
+      return { kind: "asset", asset };
+    }
+  }
+  if (assetFiles.get(filePath) === "image") return { kind: "image", file: filePath };
+  const specAction = getSpecFileAction(filePath);
+  return specAction ? { kind: "spec", ...specAction } : null;
+}
+
+function getSpecFileAction(filePath) {
+  if (project?.spec === filePath || createdSpecDrafts.get(filePath)?.owner === "project") {
+    return { owner: "project", instancePath: [] };
+  }
+  for (let screenIndex = 0; screenIndex < screens.length; screenIndex += 1) {
+    const screen = screens[screenIndex];
+    if (screen.data.spec === filePath) return { owner: "screen", screenIndex, instancePath: [] };
+    const draft = createdSpecDrafts.get(filePath);
+    if (draft?.owner === "screen" && draft.screenFile === screen.file) {
+      return { owner: "screen", screenIndex, instancePath: [] };
+    }
+    const assetSpecOwner = assetSpecOwners.get(filePath);
+    if (assetSpecOwner?.screenFile === screen.file) {
+      return { owner: "instance", screenIndex, instancePath: assetSpecOwner.instancePath };
+    }
+    if (draft?.owner === "instance" && draft.screenFile === screen.file) {
+      return { owner: "instance", screenIndex, instancePath: draft.instancePath };
+    }
+  }
+  return null;
+}
+
+async function openProjectFile(filePath) {
+  const action = getProjectFileAction(filePath);
+  if (!action) return;
+  const wasHistoryUpdateSuppressed = historyUpdateSuppressed;
+  historyUpdateSuppressed = true;
+  try {
+    if (action.kind === "project") {
+      renderProjectOverview();
+    } else if (action.kind === "screen") {
+      await renderScreen(action.screenIndex);
+    } else if (action.kind === "theme") {
+      renderThemeView(filePath);
+    } else if (action.kind === "asset") {
+      await renderAssetTemplate(action.asset.id, filePath);
+    } else if (action.kind === "spec") {
+      activeScreenIndex = action.screenIndex ?? activeScreenIndex;
+      if (viewingSpec && activeSpecPath === filePath) {
+        await renderSpecEditor(filePath, action.instancePath, action.owner);
+      } else {
+        if (action.owner === "project") renderProjectOverview();
+        else await renderScreen(activeScreenIndex);
+        await renderSpecEditor(filePath, action.instancePath, action.owner);
+      }
+    }
+  } finally {
+    historyUpdateSuppressed = wasHistoryUpdateSuppressed;
+  }
+  if (!wasHistoryUpdateSuppressed) syncBrowserHistory();
+}
+
+function configureAssetTemplateDrag(button, asset) {
+  updateAssetTemplateTreeFile(button, asset);
+  button.addEventListener("dragstart", (event) => {
+    event.dataTransfer.setData(assetDragType, asset.htmlFile);
+    event.dataTransfer.setData("text/plain", asset.data.name || asset.id);
+    event.dataTransfer.effectAllowed = "copy";
+    assetEditorRestoreId = viewingAssetTemplate ? activeAssetId : null;
+    paletteAssetDropHandled = false;
+    if (assetEditorRestoreId !== null) renderScreen(activeScreenIndex).catch(showFatalError);
+  });
+  button.addEventListener("dragend", () => {
+    const restoreAssetId = assetEditorRestoreId;
+    const shouldRestoreEditor = restoreAssetId !== null && !paletteAssetDropHandled;
+    assetEditorRestoreId = null;
+    paletteAssetDropHandled = false;
+    clearDropIndicators();
+    if (shouldRestoreEditor) renderAssetTemplate(restoreAssetId).catch(showFatalError);
+  });
+}
+
+function configureAssetFileDrag(button, filePath) {
+  const ownerScreen = filePath.match(/^screens\/([^/]+)\/assets\//)?.[1] || null;
+  const targetScreen = screens[activeScreenIndex];
+  const canDrag = Boolean(targetScreen) && (!ownerScreen || ownerScreen === targetScreen.id);
+  button.draggable = canDrag;
   button.setAttribute(
     "aria-label",
-    `${expanded ? "Hide" : "Show"} page-specific assets for ${screens.find((screen) => screen.id === screenId)?.data.name || screenId}`
+    canDrag
+      ? `${filePath.split("/").pop()} image; drag to add to ${targetScreen.data.name || "current Screen"}`
+      : `Image ${filePath} belongs to another Screen`
   );
-  panel.hidden = !expanded;
+  button.addEventListener("dragstart", (event) => {
+    event.dataTransfer.setData(assetDragType, filePath);
+    event.dataTransfer.setData("text/plain", filePath.split("/").pop());
+    event.dataTransfer.effectAllowed = "copy";
+  });
 }
 
-function renderAssetCategories(assetEntries) {
-  const categories = { children: new Map(), assets: [] };
-  for (const asset of assetEntries) {
-    let category = categories;
-    for (const segment of assetCategoryPath(asset.data, `${asset.directory}/asset.yml`)) {
-      if (!category.children.has(segment)) {
-        category.children.set(segment, { children: new Map(), assets: [] });
-      }
-      category = category.children.get(segment);
-    }
-    category.assets.push(asset);
-  }
-  return [...categories.children]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([name, category]) => renderAssetCategory(name, category));
-}
-
-function renderAssetCategory(name, category) {
-  const details = element("details", "asset-category");
-  details.open = true;
-  details.append(element("summary", "", name));
-  const content = element("div", "asset-category-content");
-  const categoryAssets = [...category.assets].sort((left, right) =>
-    (left.data.name || left.id).localeCompare(right.data.name || right.id)
+function updateAssetTemplateTreeFile(button, asset) {
+  const assetName = asset.data.name || asset.id;
+  const targetScreen = screens[activeScreenIndex];
+  const canDrag = button.dataset.projectFile === asset.htmlFile &&
+    Boolean(targetScreen) && (!asset.screen || asset.screen === targetScreen.id);
+  button.draggable = canDrag;
+  button.setAttribute(
+    "aria-label",
+    canDrag
+      ? `${assetName} template; drag to add to ${targetScreen?.data.name || "current Screen"}`
+      : `Open ${assetName} template file ${button.dataset.projectFile.split("/").pop()}`
   );
-  for (const asset of categoryAssets) {
-    const button = element("button", "asset-row");
-    const assetName = asset.data.name || asset.id;
-    const targetScreen = screens[activeScreenIndex];
-    const requiresRootLayout = targetScreen?.data.assets?.length === 0;
-    const canDrag = Boolean(targetScreen) && (!requiresRootLayout || Boolean(asset.data.slots?.length));
-    button.type = "button";
-    button.dataset.assetId = asset.id;
-    button.draggable = canDrag;
-    button.setAttribute(
-      "aria-label",
-      canDrag
-        ? `Edit ${assetName} template; drag to add to ${targetScreen?.data.name || "current Screen"}`
-        : `Edit ${assetName} template; select a Screen to add it`
-    );
-    button.append(element("span", "asset-dot", assetName.slice(0, 1).toUpperCase()));
-    button.append(element("span", "asset-name", assetName));
-    if (asset.data.slots) button.append(element("span", "asset-kind-badge", "Layout"));
-    button.addEventListener("click", () => renderAssetTemplate(asset.id).catch(showFatalError));
-    button.addEventListener("dragstart", (event) => {
-      event.dataTransfer.setData(assetDragType, asset.id);
-      event.dataTransfer.setData("text/plain", asset.id);
-      event.dataTransfer.effectAllowed = "copy";
-      assetEditorRestoreId = viewingAssetTemplate ? activeAssetId : null;
-      paletteAssetDropHandled = false;
-      if (assetEditorRestoreId !== null) {
-        renderScreen(activeScreenIndex).catch(showFatalError);
-      }
-    });
-    button.addEventListener("dragend", () => {
-      const restoreAssetId = assetEditorRestoreId;
-      const shouldRestoreEditor = restoreAssetId !== null && !paletteAssetDropHandled;
-      assetEditorRestoreId = null;
-      paletteAssetDropHandled = false;
-      clearDropIndicators();
-      if (shouldRestoreEditor) {
-        renderAssetTemplate(restoreAssetId).catch(showFatalError);
-      }
-    });
-    content.append(button);
-  }
-  for (const [childName, child] of [...category.children].sort(([left], [right]) => left.localeCompare(right))) {
-    content.append(renderAssetCategory(childName, child));
-  }
-  details.append(content);
-  return details;
 }
 
 async function createScreen() {
@@ -825,7 +1431,7 @@ async function createScreen() {
   let file;
   for (let suffix = 1; ; suffix += 1) {
     id = suffix === 1 ? baseId : `${baseId}-${suffix}`;
-    file = `screens/${id}.yml`;
+    file = `screens/${id}/screen.yml`;
     const alreadyListed = screens.some((screen) => screen.id === id || screen.file === file) ||
       project.screens.some((screen) => screen.id === id || screen.file === file);
     if (alreadyListed) continue;
@@ -837,21 +1443,50 @@ async function createScreen() {
   const screen = {
     id,
     file,
-    data: { name, description: "", assets: [] }
+    data: { name, description: "", elements: [] },
+    yamlSource: "",
+    yamlSourceMode: "data",
+    yamlParseVersion: 0,
+    yamlSerializeVersion: 0,
+    yamlTimer: null
   };
   screens.push(screen);
   project.screens.push({ id, file });
   createdScreenFiles.add(file);
+  expandFilePath(file);
   markEdited(file);
   markEdited("project.yml");
   activeScreenIndex = screens.length - 1;
+  renderScreenSelector();
   renderNavigation();
   renderScreen(activeScreenIndex).catch(showFatalError);
 }
 
-function createAssetInstance(template, siblings) {
+function createAssetInstanceId(screen, name, fallback) {
+  const normalized = (name || fallback).toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || fallback;
+  const base = /^[a-z]/.test(normalized) ? normalized : `asset-${normalized}`;
+  const usedIds = new Set();
+  function collect(instances) {
+    for (const instance of instances || []) {
+      if (typeof instance.id === "string") usedIds.add(instance.id);
+      for (const children of Object.values(instance.slots || {})) {
+        if (Array.isArray(children)) collect(children);
+      }
+    }
+  }
+  collect(screen.data.elements);
+  for (let suffix = 1; ; suffix += 1) {
+    const id = suffix === 1 ? base : `${base}-${suffix}`;
+    if (!usedIds.has(id)) return id;
+  }
+}
+
+function createTemplateElement(template, siblings, screen) {
   const templateName = template.data.name || template.id;
-  const sameTemplateCount = siblings.filter((instance) => instance["asset-template"] === template.id).length;
+  const sameTemplateCount = siblings.filter((instance) => instance.src === template.htmlFile).length;
+  const name = sameTemplateCount === 0 ? templateName : `${templateName} ${sameTemplateCount + 1}`;
   const attributes = Object.fromEntries(
     Object.entries(template.data.attributes || {})
       .filter(([, definition]) =>
@@ -860,8 +1495,10 @@ function createAssetInstance(template, siblings) {
       .map(([name, definition]) => [name, definition.default])
   );
   const instance = {
-    "asset-template": template.id,
-    name: sameTemplateCount === 0 ? templateName : `${templateName} ${sameTemplateCount + 1}`,
+    id: createAssetInstanceId(screen, name, template.id),
+    type: "template",
+    src: template.htmlFile,
+    name,
     description: template.data.description || "",
     attributes
   };
@@ -871,28 +1508,22 @@ function createAssetInstance(template, siblings) {
 
 async function ensureAssetOnScreen(template, screen) {
   if (!template.screen || template.screen === screen.id) return template;
-  const existingEntry = project.assets.find((entry) =>
-    entry.screen === screen.id && entry["copied-from"] === template.id
+  const existingCopy = [...assets.values()].find((asset) =>
+    asset.screen === screen.id && asset.copiedFrom === template.htmlFile
   );
-  if (existingEntry) {
-    const existingCopy = assets.get(existingEntry.id);
-    if (!existingCopy) {
-      throw new Error(`Copied asset "${existingEntry.id}" is not available in this project.`);
-    }
-    return existingCopy;
-  }
+  if (existingCopy) return existingCopy;
 
   const baseId = `${screen.id}-${template.id}`;
   let id;
-  let directory;
+  let file;
   for (let suffix = 1; ; suffix += 1) {
     id = suffix === 1 ? baseId : `${baseId}-${suffix}`;
-    directory = `assets/${id}`;
-    if (project.assets.some((entry) => entry.id === id || entry.directory === directory)) continue;
-    const response = await fetch(safeProjectUrl(`${directory}/asset.yml`));
+    file = `screens/${screen.id}/assets/${id}.html`;
+    if ([...assets.values()].some((entry) => entry.id === id || entry.htmlFile === file)) continue;
+    const response = await fetch(safeProjectUrl(file));
     if (response.status === 404) break;
     if (!response.ok) {
-      throw new Error(`Could not check asset directory "${directory}" (HTTP ${response.status}).`);
+      throw new Error(`Could not check Asset template file "${file}" (HTTP ${response.status}).`);
     }
   }
 
@@ -908,38 +1539,32 @@ async function ensureAssetOnScreen(template, screen) {
     throw new Error(yamlResult.error || `Could not prepare copied asset YAML (HTTP ${yamlResponse.status}).`);
   }
 
-  const relativeHtmlPath = template.htmlFile.slice(template.directory.length + 1);
+  const documentSource = sharedValidation.formatAssetDocument(yamlResult.source, template.html);
   const copy = {
     ...template,
     id,
     screen: screen.id,
-    copiedFrom: template.id,
-    directory,
-    base: safeProjectUrl(`${directory}/`),
+    copiedFrom: template.htmlFile,
+    base: safeProjectUrl(`${file.slice(0, file.lastIndexOf("/"))}/`),
     data,
-    htmlFile: `${directory}/${relativeHtmlPath}`,
+    htmlFile: file,
+    documentSource,
     yamlSource: yamlResult.source,
     yamlSourceMode: "source",
     yamlParseVersion: 0,
     yamlSerializeVersion: 0
   };
-  const entry = {
-    id,
-    directory,
-    screen: screen.id,
-    "copied-from": template.id
-  };
   assets.set(id, copy);
-  project.assets.push(entry);
+  assetFiles.set(file, "template");
   pendingAssetCopies.push({
     sourceId: template.id,
-    sourceDirectory: template.directory,
+    sourceFile: template.htmlFile,
+    sourceScreen: template.screen,
     targetId: id,
-    targetDirectory: directory,
+    targetFile: file,
     targetScreen: screen.id
   });
-  markEdited("project.yml");
-  markEdited(`${directory}/asset.yml`);
+  expandFilePath(copy.htmlFile);
   markEdited(copy.htmlFile);
   renderNavigation();
   return copy;
@@ -947,7 +1572,7 @@ async function ensureAssetOnScreen(template, screen) {
 
 function getInstanceAtPath(screen, path) {
   if (!path.length) return null;
-  let siblings = screen.data.assets;
+  let siblings = screen.data.elements;
   let instance = null;
   for (let part = 0; part < path.length; part++) {
     const index = path[part];
@@ -964,20 +1589,20 @@ function getInstanceAtPath(screen, path) {
 
 function getSiblingList(screen, parentPath, slotId) {
   if (!parentPath.length) {
-    if (slotId !== null) throw new Error("Top-level Screen assets do not have a layout slot.");
-    if (screen.data.assets !== undefined && !Array.isArray(screen.data.assets)) {
-      throw new Error(`Screen "${screen.id}" assets must be a list.`);
+    if (slotId !== null) throw new Error("Top-level Screen elements do not have a layout slot.");
+    if (screen.data.elements !== undefined && !Array.isArray(screen.data.elements)) {
+      throw new Error(`Screen "${screen.id}" elements must be a list.`);
     }
-    return screen.data.assets || (screen.data.assets = []);
+    return screen.data.elements || (screen.data.elements = []);
   }
-  if (slotId === null) throw new Error("Nested asset instances must belong to a layout slot.");
+  if (slotId === null) throw new Error("Nested elements must belong to a template slot.");
   const parent = getInstanceAtPath(screen, parentPath);
-  const parentTemplate = parent && assets.get(parent["asset-template"]);
+  const parentTemplate = parent?.type === "template" ? getTemplateByPath(parent.src) : null;
   const slot = parentTemplate?.data.slots?.find((candidate) => candidate.id === slotId);
   if (!parent || !slot) throw new Error(`Layout slot "${slotId}" is no longer available.`);
   if (parent.slots !== undefined &&
       (!parent.slots || Array.isArray(parent.slots) || typeof parent.slots !== "object")) {
-    throw new Error(`Asset instance "${parent.name || parent["asset-template"]}" slots must be a mapping.`);
+    throw new Error(`Element "${getElementLabel(parent)}" slots must be a mapping.`);
   }
   parent.slots ||= {};
   if (parent.slots[slotId] !== undefined && !Array.isArray(parent.slots[slotId])) {
@@ -992,7 +1617,7 @@ function getInstanceLocation(screen, path) {
   const siblings = getSiblingList(screen, parentPath, slotId);
   const index = path[path.length - 1];
   if (!Number.isInteger(index) || index < 0 || index >= siblings.length) {
-    throw new Error("The asset instance is no longer available.");
+    throw new Error("The Element is no longer available.");
   }
   return { parentPath, slotId, siblings, index };
 }
@@ -1001,76 +1626,64 @@ function instancePathFor(parentPath, slotId, index) {
   return slotId === null ? [...parentPath, index] : [...parentPath, slotId, index];
 }
 
-async function addAssetToContainer(assetId, parentPath, slotId, requestedIndex = null) {
+async function addAssetToContainer(assetPath, parentPath, slotId, requestedIndex = null) {
   const screen = screens[activeScreenIndex];
-  const sourceTemplate = assets.get(assetId);
-  if (!screen) throw new Error("Select a Screen before adding an asset.");
-  if (!sourceTemplate) throw new Error(`Asset template "${assetId}" is not available.`);
-  if (!parentPath.length && (!sourceTemplate.data.slots || slotId !== null)) {
-    throw new Error("A Screen's single root asset must be a layout. Drop content assets into its named slot.");
+  const sourceTemplate = getTemplateByPath(assetPath);
+  const fileType = assetFiles.get(assetPath);
+  if (!screen) throw new Error("Select a Screen before adding an Element.");
+  if (!sourceTemplate && fileType !== "image") {
+    throw new Error(`Discovered image or template asset "${assetPath}" is not available.`);
   }
   const instances = getSiblingList(screen, parentPath, slotId);
-  if (!parentPath.length && instances.length > 0) {
-    throw new Error("A Screen can contain only one root layout asset.");
-  }
-  const template = await ensureAssetOnScreen(sourceTemplate, screen);
+  const template = sourceTemplate ? await ensureAssetOnScreen(sourceTemplate, screen) : null;
   const index = requestedIndex === null
     ? instances.length
     : Math.max(0, Math.min(requestedIndex, instances.length));
-  instances.splice(index, 0, createAssetInstance(template, instances));
+  const imageName = assetPath.slice(assetPath.lastIndexOf("/") + 1);
+  const newElement = template
+    ? createTemplateElement(template, instances, screen)
+    : {
+      id: createAssetInstanceId(screen, imageName, "image"),
+      type: "image",
+      src: assetPath,
+      alt: "",
+      name: imageName
+    };
+  instances.splice(index, 0, newElement);
 
-  markEdited(screens[activeScreenIndex].file);
+  markEdited(screen.file);
   await renderScreen(activeScreenIndex);
   const addedPath = instancePathFor(parentPath, slotId, index);
-  selectInstance(addedPath, template.id);
+  selectInstance(addedPath, newElement.src || null);
   const addedInstance = findAssetInstances(byId("screen-preview"))
     .find((node) => node.dataset.instancePath === JSON.stringify(addedPath));
   addedInstance?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
-async function addAssetToScreen(assetId) {
-  const screen = screens[activeScreenIndex];
-  const sourceTemplate = assets.get(assetId);
-  if (!screen) throw new Error("Select a Screen before adding an asset.");
-  if (!sourceTemplate) throw new Error(`Asset template "${assetId}" is not available.`);
-  const rootAssets = screen.data.assets;
-  if (!Array.isArray(rootAssets)) throw new Error(`Screen "${screen.id}" assets must be a list.`);
-
-  if (sourceTemplate.data.slots) {
-    if (rootAssets.length === 0) {
-      return addAssetToContainer(assetId, [], null);
-    }
-    if (rootAssets.length !== 1) {
-      throw new Error("Fix this Screen so it has exactly one root layout before changing its layout.");
-    }
-    const hasChildren = Object.values(rootAssets[0].slots || {})
-      .some((children) => !Array.isArray(children) || children.length > 0);
-    if (hasChildren) {
-      throw new Error("Move or delete the current layout's content before replacing its root layout.");
-    }
-    const template = await ensureAssetOnScreen(sourceTemplate, screen);
-    if (rootAssets[0]["asset-template"] === template.id) return;
-    rootAssets[0] = createAssetInstance(template, []);
-    rootAssets[0].slots = Object.fromEntries(template.data.slots.map((slot) => [slot.id, []]));
-    markEdited(screen.file);
-    await renderScreen(activeScreenIndex);
-    selectInstance([0], template.id);
-    return;
-  }
-
-  if (rootAssets.length !== 1) {
-    throw new Error("Add a layout as this Screen's root asset before adding content.");
-  }
-  const rootTemplate = assets.get(rootAssets[0]["asset-template"]);
-  const slots = rootTemplate?.data.slots || [];
-  if (slots.length !== 1) {
-    throw new Error(`Drag ${sourceTemplate.data.name || assetId} into the intended named slot.`);
-  }
-  return addAssetToContainer(assetId, [0], slots[0].id);
+async function addAssetToScreen(assetPath) {
+  return addAssetToContainer(assetPath, [], null);
 }
 
-function addAssetToSlot(parentPath, slotId, assetId) {
-  return addAssetToContainer(assetId, parentPath, slotId);
+async function addTextElement() {
+  const screen = screens[activeScreenIndex];
+  if (!screen) throw new Error("Select a Screen before adding an Element.");
+  const elements = getSiblingList(screen, [], null);
+  const instance = {
+    id: createAssetInstanceId(screen, "Text", "text"),
+    type: "text",
+    name: "Text",
+    content: "Text",
+    tag: "p"
+  };
+  const index = elements.length;
+  elements.push(instance);
+  markEdited(screen.file);
+  await renderScreen(activeScreenIndex);
+  selectInstance([index], null);
+}
+
+function addAssetToSlot(parentPath, slotId, assetPath) {
+  return addAssetToContainer(assetPath, parentPath, slotId);
 }
 
 function pathStartsWith(path, prefix) {
@@ -1090,18 +1703,15 @@ function findInstancePathByReference(screen, target) {
     }
     return null;
   }
-  return search(screen.data.assets || [], []);
+  return search(screen.data.elements || [], []);
 }
 
 async function moveAssetInstance(sourcePath, parentPath, slotId, requestedIndex = null) {
   const screen = screens[activeScreenIndex];
   const source = getInstanceAtPath(screen, sourcePath);
-  if (!source) throw new Error("The dragged asset instance is no longer available.");
-  if (!parentPath.length && sourcePath.length !== 1) {
-    throw new Error("A Screen has one root layout; move content between named layout slots instead.");
-  }
+  if (!source) throw new Error("The dragged Element is no longer available.");
   if (pathStartsWith(parentPath, sourcePath)) {
-    throw new Error("A layout cannot be moved into one of its own drop zones.");
+    throw new Error("An Element cannot be moved into one of its own slots.");
   }
   const sourceLocation = getInstanceLocation(screen, sourcePath);
   const destination = getSiblingList(screen, parentPath, slotId);
@@ -1120,9 +1730,9 @@ async function moveAssetInstance(sourcePath, parentPath, slotId, requestedIndex 
   const currentParentPath = destinationParent
     ? findInstancePathByReference(screen, destinationParent)
     : [];
-  if (!currentParentPath) throw new Error("The layout drop zone moved while the asset was being placed.");
+  if (!currentParentPath) throw new Error("The drop zone moved while the Element was being placed.");
   const movedPath = instancePathFor(currentParentPath, slotId, insertionIndex);
-  selectInstance(movedPath, source["asset-template"]);
+  selectInstance(movedPath, source.src || null);
   const movedInstance = findAssetInstances(byId("screen-preview"))
     .find((node) => node.dataset.instancePath === JSON.stringify(movedPath));
   movedInstance?.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -1130,9 +1740,6 @@ async function moveAssetInstance(sourcePath, parentPath, slotId, requestedIndex 
 
 async function deleteAssetInstance(path) {
   const screen = screens[activeScreenIndex];
-  if (path.length === 1) {
-    throw new Error("A Screen must keep its single root layout. Delete or move its content assets instead.");
-  }
   const location = getInstanceLocation(screen, path);
   location.siblings.splice(location.index, 1);
   markEdited(screens[activeScreenIndex].file);
@@ -1146,13 +1753,13 @@ function readDraggedInstance(dataTransfer) {
   try {
     path = JSON.parse(payload);
   } catch {
-    throw new Error("The dragged asset instance has an invalid position.");
+    throw new Error("The dragged Element has an invalid position.");
   }
   if (!Array.isArray(path) || path.length === 0 || path.length % 2 !== 1 ||
       path.some((part, index) => index % 2 === 0
         ? !Number.isInteger(part) || part < 0
         : typeof part !== "string" || !part)) {
-    throw new Error("The dragged asset instance has an invalid position.");
+    throw new Error("The dragged Element has an invalid position.");
   }
   return path;
 }
@@ -1176,8 +1783,43 @@ function findAssetInstances(root, instances = []) {
   return instances;
 }
 
+function revealInstanceInPreview(path) {
+  const selectedPath = JSON.stringify(path);
+  let selectedNode = null;
+  for (const node of findAssetInstances(byId("screen-preview"))) {
+    const selected = node.dataset.instancePath === selectedPath;
+    node.classList.toggle("selected", selected);
+    if (selected) selectedNode = node;
+  }
+  if (!selectedNode) return null;
+
+  let scrollTarget = selectedNode;
+  while (scrollTarget && scrollTarget.getClientRects().length === 0) {
+    scrollTarget = scrollTarget.parentElement?.closest(".asset-instance") || null;
+  }
+  const preview = byId("screen-preview");
+  const target = scrollTarget || selectedNode;
+  const previewTop = preview.getBoundingClientRect().top;
+  const targetRect = target.getBoundingClientRect();
+  const targetTop = targetRect.top - previewTop + preview.scrollTop;
+  const targetBottom = targetTop + targetRect.height;
+  const visibleTop = preview.scrollTop;
+  const visibleBottom = visibleTop + preview.clientHeight;
+  let nextScrollTop = visibleTop;
+  if (targetTop < visibleTop) nextScrollTop = targetTop;
+  else if (targetBottom > visibleBottom) nextScrollTop = targetBottom - preview.clientHeight;
+  if (nextScrollTop !== visibleTop) {
+    preview.scrollTo({
+      top: Math.max(0, Math.min(nextScrollTop, preview.scrollHeight - preview.clientHeight)),
+      behavior: "smooth"
+    });
+  }
+  return selectedNode;
+}
+
 const screenStage = byId("screen-stage");
 screenStage.addEventListener("dragover", (event) => {
+  if (screenViewMode !== "preview") return;
   const types = [...event.dataTransfer.types];
   if (!types.includes(assetDragType) && !types.includes(assetInstanceDragType)) return;
   event.preventDefault();
@@ -1188,19 +1830,20 @@ screenStage.addEventListener("dragleave", (event) => {
   if (!screenStage.contains(event.relatedTarget)) screenStage.classList.remove("drop-target");
 });
 screenStage.addEventListener("drop", (event) => {
-  const assetId = event.dataTransfer.getData(assetDragType);
+  if (screenViewMode !== "preview") return;
+  const assetPath = event.dataTransfer.getData(assetDragType);
   const sourcePath = readDraggedInstance(event.dataTransfer);
-  if (!assetId && !sourcePath) return;
+  if (!assetPath && !sourcePath) return;
   event.preventDefault();
   event.stopPropagation();
   screenStage.classList.remove("drop-target");
   if (sourcePath) {
     moveAssetInstance(sourcePath, [], null).catch(showAddAssetError);
-  } else if (!assets.has(assetId)) {
-    showEditorMessage("Could not add asset", `Asset template "${assetId}" is not available in this project.`);
+  } else if (!assetFiles.has(assetPath)) {
+    showEditorMessage("Could not add asset", `Asset "${assetPath}" is not available in this project.`);
   } else {
     paletteAssetDropHandled = true;
-    addAssetToScreen(assetId).catch(showAddAssetError);
+    addAssetToScreen(assetPath).catch(showAddAssetError);
   }
 });
 
@@ -1211,19 +1854,21 @@ function showAddAssetError(error) {
 async function renderScreen(index, options = {}) {
   const selected = screens[index];
   if (!selected) return;
+  discardUneditedActiveSpecDraft();
+  activeProjectFilePath = selected.file;
   closeAssetContextMenu();
   clearTimeout(assetPreviewTimer);
   assetPreviewTimer = null;
   assetPreviewVersion += 1;
   byId("main").classList.remove("asset-editing");
   byId("main").classList.remove("spec-editing");
-  byId("asset-html-editor-panel").hidden = true;
-  byId("asset-html-source").oninput = null;
-  byId("asset-yaml-editor-panel").hidden = true;
-  byId("asset-yaml-source").oninput = null;
+  byId("asset-document-editor-panel").hidden = true;
+  byId("asset-document-source").oninput = null;
   byId("spec-editor-panel").hidden = true;
   byId("spec-source").oninput = null;
   activeScreenIndex = index;
+  renderScreenSelector();
+  revealProjectFile(selected.file);
   viewingAssetTemplate = false;
   viewingTheme = false;
   viewingProject = false;
@@ -1239,6 +1884,8 @@ async function renderScreen(index, options = {}) {
   byId("screen-heading").textContent = selected.data.name || selected.id;
   byId("breadcrumb").textContent = "Screens";
   renderPreviewStateControls(selected.data);
+  configureScreenYamlEditor(selected);
+  syncScreenViewMode();
 
   const preview = byId("screen-preview");
   preview.className = "screen-preview";
@@ -1249,38 +1896,29 @@ async function renderScreen(index, options = {}) {
   preview.append(content);
 
   try {
-    if (!Array.isArray(selected.data.assets)) {
-      throw new Error(`Screen "${selected.id}" assets must be a list.`);
+    if (!Array.isArray(selected.data.elements)) {
+      throw new Error(`Screen "${selected.id}" elements must be a list.`);
     }
-    if (selected.data.assets.length === 0) {
-      byId("screen-stage").setAttribute("aria-label", "Empty Screen preview; drop a layout asset here");
-      const dropZone = element("div", "empty-screen-drop-zone", "Drop a layout asset here");
+    if (selected.data.elements.length === 0) {
+      byId("screen-stage").setAttribute("aria-label", "Empty Screen preview; add Elements here");
+      const dropZone = element("div", "empty-screen-drop-zone", "Drop or add Elements here");
       dropZone.setAttribute("role", "group");
-      dropZone.setAttribute("aria-label", "Drop a layout asset here to create the Screen root");
+      dropZone.setAttribute("aria-label", "Drop an image or template asset here to add a Screen Element");
       content.append(dropZone);
       renderInspector();
       return;
     }
-    byId("screen-stage").setAttribute("aria-label", "Rendered Screen preview; drop an asset here to add it");
-    if (selected.data.assets.length !== 1) {
-      throw new Error(`Screen "${selected.id}" must contain exactly one root layout asset.`);
+    byId("screen-stage").setAttribute("aria-label", "Rendered Screen preview; drop assets here to add Elements");
+    for (const [index, instance] of selected.data.elements.entries()) {
+      const host = await renderInstance(
+        instance,
+        instance.type === "template" ? getTemplateByPath(instance.src) : null,
+        [index],
+        selected.id,
+        selected.data.name || selected.id
+      );
+      content.append(host);
     }
-    const instance = selected.data.assets[0];
-    const template = assets.get(instance["asset-template"]);
-    if (!template) {
-      throw new Error(`Screen references unknown asset template "${instance["asset-template"]}".`);
-    }
-    if (!template.data.slots?.length) {
-      throw new Error(`Screen "${selected.id}" root asset "${template.id}" must define at least one named slot.`);
-    }
-    const host = await renderInstance(
-      instance,
-      template,
-      [0],
-      selected.id,
-      selected.data.name || selected.id
-    );
-    content.append(host);
     renderInspector();
   } catch (error) {
     setPreviewMessage("error", error.message);
@@ -1295,10 +1933,12 @@ async function renderSpecEditor(filePath, instancePath = activeInstancePath, own
   const draft = createdSpecDrafts.get(filePath);
   const isProjectSpec = owner === "project";
   const isScreenSpec = owner === "screen";
+  activeProjectFilePath = filePath;
   const isScreenDraft = isScreenSpec && draft?.owner === "screen" && draft.screenFile === screen?.file;
   const instance = !isProjectSpec && !isScreenSpec && screen
     ? getInstanceAtPath(screen, instancePath)
     : null;
+  const assetSpecOwner = assetSpecOwners.get(filePath);
   if (isProjectSpec) {
     if (project.spec !== filePath && draft?.owner !== "project") {
       throw new Error(`Behavior spec "${filePath}" is not attached to the project.`);
@@ -1307,17 +1947,21 @@ async function renderSpecEditor(filePath, instancePath = activeInstancePath, own
     if (!screen || (screen.data.spec !== filePath && !isScreenDraft)) {
       throw new Error(`Behavior spec "${filePath}" is not attached to the selected Screen.`);
     }
-  } else if (!instance || (instance.spec !== filePath && draft?.owner !== "instance")) {
-    throw new Error(`Behavior spec "${filePath}" is not attached to the selected asset instance.`);
+  } else if (!instance ||
+      (draft?.owner !== "instance" &&
+       (assetSpecOwner?.screenFile !== screen?.file ||
+        !sameInstancePath(assetSpecOwner.instancePath, instancePath)))) {
+    throw new Error(`Behavior spec "${filePath}" is not attached to the selected Element.`);
   }
   if (!specSources.has(filePath)) specSources.set(filePath, await loadText(filePath));
+  if (viewingSpec && activeSpecPath !== filePath) {
+    discardUneditedActiveSpecDraft();
+  }
 
   byId("main").classList.remove("asset-editing");
   byId("main").classList.add("spec-editing");
-  byId("asset-html-editor-panel").hidden = true;
-  byId("asset-html-source").oninput = null;
-  byId("asset-yaml-editor-panel").hidden = true;
-  byId("asset-yaml-source").oninput = null;
+  byId("asset-document-editor-panel").hidden = true;
+  byId("asset-document-source").oninput = null;
   byId("spec-editor-panel").hidden = false;
   viewingAssetTemplate = false;
   viewingTheme = false;
@@ -1327,7 +1971,7 @@ async function renderSpecEditor(filePath, instancePath = activeInstancePath, own
   activeSpecPath = filePath;
   activeSpecOwner = owner;
   activeSpecInstancePath = isProjectSpec || isScreenSpec ? [] : [...instancePath];
-  activeAssetId = instance?.["asset-template"] || null;
+  activeAssetId = instance?.src || null;
   activeInstancePath = isProjectSpec || isScreenSpec ? [] : [...instancePath];
   hideEditorMessage();
   updateNavigationSelection();
@@ -1355,19 +1999,24 @@ async function renderSpecEditor(filePath, instancePath = activeInstancePath, own
   editor.oninput = () => {
     const source = editor.value;
     specSources.set(filePath, source);
+    let assetSpecError = "";
+    if (screens.some((entry) => filePath.startsWith(`screens/${entry.id}/specs/element-`))) {
+      try {
+        refreshAssetSpecOwner(filePath, source);
+      } catch (error) {
+        assetSpecError = error.message || String(error);
+      }
+    }
     const pendingDraft = createdSpecDrafts.get(filePath);
     if (pendingDraft) {
       const draftScreen = screens.find((entry) => entry.file === pendingDraft.screenFile);
-      const draftInstance = draftScreen && pendingDraft.owner === "instance"
-        ? getInstanceAtPath(draftScreen, pendingDraft.instancePath)
-        : null;
       if (source === pendingDraft.initialContent) {
         if (pendingDraft.owner === "project") {
           if (project.spec === filePath) delete project.spec;
         } else if (pendingDraft.owner === "screen") {
           if (draftScreen?.data.spec === filePath) delete draftScreen.data.spec;
-        } else if (draftInstance?.spec === filePath) {
-          delete draftInstance.spec;
+        } else {
+          assetSpecOwners.delete(filePath);
         }
         createdSpecFiles.delete(filePath);
         clearEdited(filePath);
@@ -1376,24 +2025,56 @@ async function renderSpecEditor(filePath, instancePath = activeInstancePath, own
       }
       if (pendingDraft.owner === "project") project.spec = filePath;
       else if (pendingDraft.owner === "screen" && draftScreen) draftScreen.data.spec = filePath;
-      else if (draftInstance) draftInstance.spec = filePath;
       createdSpecFiles.add(filePath);
     }
     markEdited(filePath);
-    byId("spec-status").textContent = pendingDraft
+    byId("spec-status").textContent = assetSpecError || (pendingDraft
       ? "Example edited; unsaved changes."
-      : "Unsaved Markdown changes.";
+      : "Unsaved Markdown changes.");
+    byId("spec-status").classList.toggle("error", Boolean(assetSpecError));
   };
   renderInspector();
+  if (instance) {
+    requestAnimationFrame(() => {
+      if (viewingSpec && activeSpecPath === filePath &&
+          sameInstancePath(activeInstancePath, instancePath)) {
+        revealInstanceInPreview(instancePath);
+      }
+    });
+  }
+}
+
+function discardUneditedActiveSpecDraft() {
+  if (!viewingSpec || !activeSpecPath) return;
+  const filePath = activeSpecPath;
+  const draft = createdSpecDrafts.get(filePath);
+  if (!draft || createdSpecFiles.has(filePath) ||
+      specSources.get(filePath) !== draft.initialContent) {
+    return;
+  }
+
+  createdSpecDrafts.delete(filePath);
+  createdSpecFiles.delete(filePath);
+  specSources.delete(filePath);
+  assetSpecOwners.delete(filePath);
+  if (draft.owner === "project" && project.spec === filePath) {
+    delete project.spec;
+  } else if (draft.owner === "screen") {
+    const screen = screens.find((entry) => entry.file === draft.screenFile);
+    if (screen?.data.spec === filePath) delete screen.data.spec;
+  }
+  clearEdited(filePath);
+  renderNavigation();
 }
 
 async function createSpecForInstance(instancePath) {
   const screen = screens[activeScreenIndex];
   const instance = screen && getInstanceAtPath(screen, instancePath);
-  const template = instance && assets.get(instance["asset-template"]);
-  if (!screen || !instance || !template) throw new Error("The selected asset instance is no longer available.");
-  if (instance.spec) {
-    await renderSpecEditor(instance.spec, instancePath);
+  const template = instance?.type === "template" ? getTemplateByPath(instance.src) : null;
+  if (!screen || !instance) throw new Error("The selected Element is no longer available.");
+  const linkedSpecPath = getAssetSpecPath(screen, instance);
+  if (linkedSpecPath) {
+    await renderSpecEditor(linkedSpecPath, instancePath);
     return;
   }
   const pendingDraft = [...createdSpecDrafts.entries()].find(([, draft]) =>
@@ -1403,26 +2084,23 @@ async function createSpecForInstance(instancePath) {
     await renderSpecEditor(pendingDraft[0], instancePath);
     return;
   }
-  const pathSegment = instancePath.map((part) =>
-    typeof part === "number" ? String(part) : part
-  ).join("-");
-  const baseName = `${screen.id}-${pathSegment}-${template.id}`;
   let filePath;
-  for (let suffix = 1; ; suffix += 1) {
-    const name = suffix === 1 ? baseName : `${baseName}-${suffix}`;
-    filePath = `specs/${name}.md`;
-    sharedValidation.validateSpecPath(filePath);
-    if (specSources.has(filePath)) continue;
-    const response = await fetch(safeProjectUrl(filePath));
-    if (response.status === 404) break;
+  filePath = `screens/${screen.id}/specs/element-${instance.id}.md`;
+  sharedValidation.validateElementSpecPath(filePath, instance.id);
+  if (specSources.has(filePath)) {
+    throw new Error(`Behavior spec "${filePath}" already exists but is not linked to this Element.`);
+  }
+  const response = await fetch(safeProjectUrl(filePath));
+  if (response.status !== 404) {
     if (!response.ok) {
       throw new Error(`Could not check whether behavior spec "${filePath}" already exists (HTTP ${response.status}).`);
     }
+    throw new Error(`Behavior spec "${filePath}" already exists but is not loaded.`);
   }
-  const heading = (instance.name || template.data.name || template.id)
+  const heading = getElementLabel(instance)
     .replace(/\r?\n/g, " ")
     .trim() || template.id;
-  const source = `# ${heading}\n\n## Purpose\n\nDescribe the behavior this asset instance is responsible for.\n\n## Requirements\n\n### Requirement: Perform the intended action\nThe system SHALL perform the intended behavior for this asset instance.\n\n#### Scenario: User interacts with this instance\n- **WHEN** the user interacts with this instance\n- **THEN** describe the expected observable outcome.\n`;
+  const source = `---\nelement-id: ${instance.id}\n---\n\n# ${heading}\n\n## Purpose\n\nDescribe the behavior this Element is responsible for.\n\n## Requirements\n\n### Requirement: Perform the intended action\nThe system SHALL perform the intended behavior for this Element.\n\n#### Scenario: User interacts with this Element\n- **WHEN** the user interacts with this Element\n- **THEN** describe the expected observable outcome.\n`;
   specSources.set(filePath, source);
   createdSpecDrafts.set(filePath, {
     owner: "instance",
@@ -1430,6 +2108,8 @@ async function createSpecForInstance(instancePath) {
     screenFile: screen.file,
     instancePath: [...instancePath]
   });
+  expandFilePath(filePath);
+  renderNavigation();
   await renderSpecEditor(filePath, instancePath);
 }
 
@@ -1466,6 +2146,8 @@ async function createProjectSpec() {
     initialContent: source,
     projectFile: "project.yml"
   });
+  expandFilePath(filePath);
+  renderNavigation();
   await renderSpecEditor(filePath, [], "project");
 }
 
@@ -1484,18 +2166,17 @@ async function createSpecForScreen() {
     return;
   }
 
-  const baseName = `${screen.id}-behavior`;
-  let filePath;
-  for (let suffix = 1; ; suffix += 1) {
-    const name = suffix === 1 ? baseName : `${baseName}-${suffix}`;
-    filePath = `specs/${name}.md`;
-    sharedValidation.validateSpecPath(filePath);
-    if (specSources.has(filePath)) continue;
-    const response = await fetch(safeProjectUrl(filePath));
-    if (response.status === 404) break;
-    if (!response.ok) {
-      throw new Error(`Could not check whether behavior spec "${filePath}" already exists (HTTP ${response.status}).`);
+  const filePath = `screens/${screen.id}/specs/screen.md`;
+  sharedValidation.validateSpecPath(filePath);
+  if (specSources.has(filePath)) {
+    throw new Error(`Behavior spec "${filePath}" already exists but is not linked to this Screen.`);
+  }
+  const existingResponse = await fetch(safeProjectUrl(filePath));
+  if (existingResponse.status !== 404) {
+    if (!existingResponse.ok) {
+      throw new Error(`Could not check whether behavior spec "${filePath}" already exists (HTTP ${existingResponse.status}).`);
     }
+    throw new Error(`Behavior spec "${filePath}" already exists but is not linked to this Screen.`);
   }
   const heading = (screen.data.name || screen.id).replace(/\r?\n/g, " ").trim();
   const states = getScreenPreviewStates(screen.data).filter((state) => state.id !== "default");
@@ -1516,11 +2197,15 @@ async function createSpecForScreen() {
     initialContent: source,
     screenFile: screen.file
   });
+  expandFilePath(filePath);
+  renderNavigation();
   await renderSpecEditor(filePath, [], "screen");
 }
 
 function renderProjectOverview() {
   if (!project) return;
+  discardUneditedActiveSpecDraft();
+  activeProjectFilePath = "project.yml";
   hidePreviewStateControls();
   closeAssetContextMenu();
   clearTimeout(assetPreviewTimer);
@@ -1528,10 +2213,8 @@ function renderProjectOverview() {
   assetPreviewVersion += 1;
   byId("main").classList.remove("asset-editing");
   byId("main").classList.remove("spec-editing");
-  byId("asset-html-editor-panel").hidden = true;
-  byId("asset-html-source").oninput = null;
-  byId("asset-yaml-editor-panel").hidden = true;
-  byId("asset-yaml-source").oninput = null;
+  byId("asset-document-editor-panel").hidden = true;
+  byId("asset-document-source").oninput = null;
   byId("spec-editor-panel").hidden = true;
   byId("spec-source").oninput = null;
   viewingAssetTemplate = false;
@@ -1614,7 +2297,7 @@ function renderProjectOverview() {
   configuration.append(element(
     "p",
     "project-overview-config-note",
-    "Project-wide specs cover behavior shared across Screens. Use a Screen-level spec for page behavior and preview-state activation, and asset-instance specs for individual controls or components."
+    "Project-wide specs cover behavior shared across Screens. Use a Screen-level spec for page behavior and preview-state activation, and Asset specs for individual controls or components."
   ));
   sections.append(configuration);
   content.append(sections);
@@ -1622,9 +2305,11 @@ function renderProjectOverview() {
   renderInspector();
 }
 
-async function renderAssetTemplate(assetId) {
+async function renderAssetTemplate(assetId, filePath = null) {
   const template = assets.get(assetId);
   if (!template) return;
+  discardUneditedActiveSpecDraft();
+  activeProjectFilePath = filePath || template.htmlFile;
   hidePreviewStateControls();
   closeAssetContextMenu();
   updateScreenDomContext(null);
@@ -1648,88 +2333,92 @@ async function renderAssetTemplate(assetId) {
   byId("screen-stage").setAttribute("aria-label", `${template.data.name || assetId} template preview`);
   byId("breadcrumb").textContent = "Asset templates";
   byId("main").classList.add("asset-editing");
-  byId("asset-html-editor-panel").hidden = false;
-  byId("asset-yaml-editor-panel").hidden = false;
-  const htmlEditor = byId("asset-html-source");
-  htmlEditor.value = template.html;
-  htmlEditor.setAttribute("aria-label", `HTML source for ${template.data.name || assetId}`);
-  htmlEditor.oninput = () => {
-    template.html = htmlEditor.value;
-    markEdited(template.htmlFile);
-    clearTimeout(assetPreviewTimer);
-    assetPreviewTimer = setTimeout(() => {
-      renderAssetTemplatePreview(template).catch((error) => setPreviewMessage("error", error.message));
-    }, 180);
-  };
-  const yamlEditor = byId("asset-yaml-source");
-  yamlEditor.value = template.yamlSource;
-  yamlEditor.setAttribute("aria-label", `YAML source for ${template.data.name || assetId}`);
-  yamlEditor.oninput = () => {
-    const source = yamlEditor.value;
-    const filePath = `${template.directory}/asset.yml`;
-    template.yamlSource = source;
+  byId("asset-document-editor-panel").hidden = false;
+  byId("asset-document-editor-heading").textContent =
+    `${template.data.name || assetId} — ${template.htmlFile.split("/").pop()}`;
+  const editor = byId("asset-document-source");
+  editor.value = template.documentSource;
+  editor.setAttribute("aria-label", `${template.data.name || assetId} Asset document source`);
+  editor.oninput = () => {
+    const source = editor.value;
+    const filePath = template.htmlFile;
+    template.documentSource = source;
     template.yamlSourceMode = "source";
+    template.yamlSerializeVersion += 1;
+    pendingAssetSerializations.delete(template.id);
     const version = ++template.yamlParseVersion;
-    invalidYamlFiles.set(filePath, "Validating YAML...");
-    setAssetYamlStatus(template, "Validating YAML...");
+    invalidYamlFiles.set(filePath, "Validating YAML front matter...");
+    setAssetDocumentStatus(template, "Validating YAML front matter...");
     markEdited(filePath);
     clearTimeout(template.yamlTimer);
     template.yamlTimer = setTimeout(() => {
-      parseAssetYaml(template, source, version).catch((error) => {
+      parseAssetDocument(template, source, version).catch((error) => {
         if (version !== template.yamlParseVersion) return;
         invalidYamlFiles.set(filePath, error.message || String(error));
-        setAssetYamlStatus(template, `Invalid asset YAML: ${error.message || String(error)}`, true);
+        setAssetDocumentStatus(
+          template,
+          `Invalid Asset document: ${error.message || String(error)}`,
+          true
+        );
         updateSaveControls();
       });
     }, 250);
   };
-  const yamlError = invalidYamlFiles.get(`${template.directory}/asset.yml`);
-  if (yamlError) setAssetYamlStatus(template, `Invalid asset YAML: ${yamlError}`, true);
-  else setAssetYamlStatus(template, template.yamlStatus?.message || "");
+  const documentError = invalidYamlFiles.get(template.htmlFile);
+  if (documentError) {
+    setAssetDocumentStatus(template, `Invalid Asset document: ${documentError}`, true);
+  } else {
+    setAssetDocumentStatus(template, template.yamlStatus?.message || "");
+  }
   await renderAssetTemplatePreview(template);
   renderInspector();
 }
 
-async function parseAssetYaml(template, source, version) {
-  const filePath = `${template.directory}/asset.yml`;
-  const response = await fetch("/api/yaml/parse", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source })
-  });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || `YAML parsing failed (HTTP ${response.status}).`);
+async function parseAssetDocument(template, source, version) {
+  const filePath = template.htmlFile;
+  const { header, body } = sharedValidation.splitAssetDocument(source, filePath);
+  const data = await parseYamlSource(header, `${filePath} front matter`);
   if (version !== template.yamlParseVersion) return;
-  const data = result.data;
+  sharedValidation.validateAssetTemplateHeader(data, filePath);
   if (data.id !== template.id) {
     throw new Error(`Asset id must remain "${template.id}".`);
   }
-  assetCategoryPath(data, filePath);
-  validateAssetAttributes(data, filePath);
-  validateAssetSlots(data, filePath);
-  validateAssetSlotMarkup(data, template.html, template.htmlFile);
+  assetCategoryPath(data, `${filePath} front matter`);
+  validateAssetAttributes(data, `${filePath} front matter`);
+  validateAssetSlots(data, `${filePath} front matter`);
+  validateAssetSlotMarkup(data, body, filePath);
+  const attributeNames = new Set(Object.keys(data.attributes || {}));
+  for (const match of body.matchAll(/\$\{attributes\.([^}]+)\}/g)) {
+    if (!attributeNames.has(match[1])) {
+      throw new Error(`references undeclared attribute "${match[1]}".`);
+    }
+  }
   template.data = data;
-  template.yamlSource = source;
+  template.html = body;
+  template.documentSource = source;
+  template.yamlSource = header;
   template.yamlSourceMode = "source";
   invalidYamlFiles.delete(filePath);
-  setAssetYamlStatus(template, "YAML is valid.");
+  setAssetDocumentStatus(template, "YAML front matter is valid.");
   renderNavigation();
   updateSaveControls();
   if (viewingAssetTemplate && activeAssetId === template.id) {
     byId("screen-heading").textContent = `${template.data.name || template.id} template`;
-    byId("asset-yaml-source").setAttribute(
+    byId("asset-document-editor-heading").textContent =
+      `${template.data.name || template.id} — ${template.htmlFile.split("/").pop()}`;
+    byId("asset-document-source").setAttribute(
       "aria-label",
-      `YAML source for ${template.data.name || template.id}`
+      `${template.data.name || template.id} Asset document source`
     );
     renderInspector();
     await renderAssetTemplatePreview(template);
   }
 }
 
-function setAssetYamlStatus(template, message, isError = false) {
+function setAssetDocumentStatus(template, message, isError = false) {
   template.yamlStatus = { message, isError };
   if (!viewingAssetTemplate || activeAssetId !== template.id) return;
-  const status = byId("asset-yaml-status");
+  const status = byId("asset-document-status");
   status.textContent = message;
   status.classList.toggle("error", isError);
 }
@@ -1766,27 +2455,33 @@ function createSampleInstance(template) {
 }
 
 async function renderInstance(instance, template, instancePath, screenId = "", screenName = "") {
-  for (const name of Object.keys(instance.attributes || {})) {
-    const definition = template.data.attributes?.[name];
-    if (!definition) {
-      throw new Error(`Asset "${template.id}" does not define the "${name}" attribute used by this Screen.`);
-    }
-    if (definition.overridable !== true) {
-      throw new Error(`Asset attribute "${name}" in "${template.id}" is not marked overridable.`);
-    }
-    if (!isValidAttributeValue(definition, instance.attributes[name])) {
-      throw new Error(`Screen value for "${template.id}.${name}" does not match its declared type.`);
+  const type = instance.type || "template";
+  if (type === "template" && !template) {
+    throw new Error(`Screen references undiscovered template asset "${instance.src}".`);
+  }
+  if (type === "template") {
+    for (const name of Object.keys(instance.attributes || {})) {
+      const definition = template.data.attributes?.[name];
+      if (!definition) {
+        throw new Error(`Template "${template.id}" does not define the "${name}" attribute used by this Element.`);
+      }
+      if (definition.overridable !== true) {
+        throw new Error(`Template attribute "${name}" in "${template.id}" is not marked overridable.`);
+      }
+      if (!isValidAttributeValue(definition, instance.attributes[name])) {
+        throw new Error(`Screen value for "${template.id}.${name}" does not match its declared type.`);
+      }
     }
   }
 
   const host = element("div", "asset-instance");
   host.dataset.instancePath = JSON.stringify(instancePath);
-  const isScreenRootLayout = screenId && instancePath.length === 1;
-  host.hidden = Boolean(screenId && !isScreenRootLayout && !isInstanceVisible(instance));
-  if (!isScreenRootLayout) {
+  host.hidden = Boolean(screenId && !isInstanceVisible(instance));
+  if (screenId) {
     host.dataset.openuxScreenId = screenId;
     host.dataset.openuxScreenName = screenName;
-    host.dataset.openuxAssetId = template.id;
+    host.dataset.openuxAssetId = template?.id || instance.src || type;
+    host.dataset.openuxElementId = instance.id || "";
     host.dataset.openuxInstanceName = typeof instance.name === "string" ? instance.name : "";
     host.dataset.openuxInstancePath = JSON.stringify(instancePath);
   }
@@ -1794,20 +2489,32 @@ async function renderInstance(instance, template, instancePath, screenId = "", s
   host.draggable = instancePath.length > 0;
   host.tabIndex = 0;
   host.setAttribute("role", "group");
-  host.setAttribute("aria-label", instance.name || template.data.name || "Asset instance");
+  host.setAttribute("aria-label", getElementLabel(instance));
   if (sameInstancePath(activeInstancePath, instancePath)) {
     host.classList.add("selected");
   }
 
-  const usesLightDom = Boolean(template.data.slots);
+  const usesLightDom = type === "template" && Boolean(template.data.slots);
   if (usesLightDom) host.id = `openux-asset-scope-${++assetStyleScopeId}`;
-  const root = usesLightDom ? host : host.attachShadow({ mode: "open" });
-  mountAssetMarkup(root, template.html, template.base, instance, template);
+  if (type === "template") {
+    const root = usesLightDom ? host : host.attachShadow({ mode: "open" });
+    mountAssetMarkup(root, template.html, template.base, instance, template);
+  } else if (type === "image") {
+    const image = element("img", "screen-image");
+    image.src = safeProjectUrl(instance.src).href;
+    image.alt = instance.alt;
+    host.append(image);
+  } else if (type === "text") {
+    const text = element(instance.tag || "p", "screen-text", instance.content);
+    host.append(text);
+  } else {
+    throw new Error(`Element "${instance.id}" has unsupported type "${type}".`);
+  }
   if (instancePath.length) {
     host.addEventListener("dragstart", (event) => {
       event.stopPropagation();
       event.dataTransfer.setData(assetInstanceDragType, JSON.stringify(instancePath));
-      event.dataTransfer.setData("text/plain", instance.name || template.data.name || template.id);
+      event.dataTransfer.setData("text/plain", getElementLabel(instance));
       event.dataTransfer.effectAllowed = "move";
       host.classList.add("dragging");
     });
@@ -1828,8 +2535,8 @@ async function renderInstance(instance, template, instancePath, screenId = "", s
     });
     host.addEventListener("drop", (event) => {
       const sourcePath = readDraggedInstance(event.dataTransfer);
-      const assetId = event.dataTransfer.getData(assetDragType);
-      if (!sourcePath && !assetId) return;
+      const assetPath = event.dataTransfer.getData(assetDragType);
+      if (!sourcePath && !assetPath) return;
       event.preventDefault();
       event.stopPropagation();
       const rect = host.getBoundingClientRect();
@@ -1840,34 +2547,35 @@ async function renderInstance(instance, template, instancePath, screenId = "", s
       const insertionIndex = instancePath[instancePath.length - 1] + (insertAfter ? 1 : 0);
       if (sourcePath) {
         moveAssetInstance(sourcePath, parentPath, slotId, insertionIndex).catch(showAddAssetError);
-      } else if (!assets.has(assetId)) {
-        showEditorMessage("Could not add asset", `Asset template "${assetId}" is not available in this project.`);
+      } else if (!assetFiles.has(assetPath)) {
+        showEditorMessage("Could not add asset", `Asset "${assetPath}" is not available in this project.`);
       } else {
         paletteAssetDropHandled = true;
-        if (instancePath.length === 1) {
-          addAssetToScreen(assetId).catch(showAddAssetError);
-        } else {
-          addAssetToContainer(assetId, parentPath, slotId, insertionIndex).catch(showAddAssetError);
-        }
+        addAssetToContainer(assetPath, parentPath, slotId, insertionIndex)
+          .catch(showAddAssetError);
       }
     });
     host.addEventListener("click", (event) => {
       const clickedInstance = getEventInstance(event);
-      if (clickedInstance === host) selectInstance(instancePath, template.id);
+      if (clickedInstance === host && !(viewingSpec && event.detail > 1)) {
+        selectInstance(instancePath, instance.src || null);
+      }
     });
     host.addEventListener("dblclick", (event) => {
       if (!screenId || getEventInstance(event) !== host) return;
       event.preventDefault();
       event.stopPropagation();
-      selectInstance(instancePath, template.id);
+      if (viewingSpec) return;
+      selectInstance(instancePath, instance.src || null);
       const selected = getInstanceAtPath(screens[activeScreenIndex], instancePath);
-      if (!selected?.spec) {
+      const specPath = selected && getAssetSpecPath(screens[activeScreenIndex], selected);
+      if (!specPath) {
         createSpecForInstance(instancePath).catch((error) =>
           showEditorMessage("Could not create behavior spec", error.message || String(error))
         );
         return;
       }
-      renderSpecEditor(selected.spec, instancePath).catch((error) =>
+      renderSpecEditor(specPath, instancePath).catch((error) =>
         showEditorMessage("Could not open behavior spec", error.message || String(error))
       );
     });
@@ -1875,21 +2583,24 @@ async function renderInstance(instance, template, instancePath, screenId = "", s
       if (!screenId) return;
       event.preventDefault();
       event.stopPropagation();
-      selectInstance(instancePath, template.id);
-      openAssetContextMenu(event, host, instancePath, template.id);
+      selectInstance(instancePath, instance.src || null);
+      openAssetContextMenu(event, host, instancePath, instance.src || null);
     });
     host.addEventListener("focus", (event) => {
-      if (getEventInstance(event) === host) selectInstance(instancePath, template.id);
+      if (getEventInstance(event) === host) selectInstance(instancePath, instance.src || null);
     });
     host.addEventListener("keydown", (event) => {
       if ((event.key === "Enter" || event.key === " ") && event.target === host) {
         event.preventDefault();
-        if (getEventInstance(event) === host) selectInstance(instancePath, template.id);
+        if (getEventInstance(event) === host) selectInstance(instancePath, instance.src || null);
       }
     });
   }
 
-  await renderInstanceSlots(root, instance, template, instancePath, screenId, screenName);
+  if (type === "template") {
+    const root = usesLightDom ? host : host.shadowRoot;
+    await renderInstanceSlots(root, instance, template, instancePath, screenId, screenName);
+  }
   return host;
 }
 
@@ -1901,17 +2612,22 @@ function getEventInstance(event) {
 
 function openAssetContextMenu(event, host, instancePath, assetId) {
   const menu = byId("asset-context-menu");
+  const instance = getInstanceAtPath(screens[activeScreenIndex], instancePath);
+  const template = instance?.type === "template" ? getTemplateByPath(instance.src) : null;
   assetContextMenuTarget = {
     screenIndex: activeScreenIndex,
     instancePath: [...instancePath],
     assetId,
     host
   };
+  const editTemplateButton = byId("asset-context-edit-template");
+  editTemplateButton.disabled = !template;
+  editTemplateButton.title = template
+    ? "Open the reusable template asset"
+    : "Only template Elements have editable HTML assets.";
   const deleteButton = byId("asset-context-delete");
   deleteButton.disabled = false;
-  deleteButton.title = instancePath.length === 1
-    ? "A Screen's root layout cannot be deleted."
-    : "";
+  deleteButton.title = "";
   menu.hidden = false;
 
   const bounds = menu.getBoundingClientRect();
@@ -1942,8 +2658,8 @@ function resolveAssetContextTarget(target) {
   }
   const screen = screens[target.screenIndex];
   const instance = screen && getInstanceAtPath(screen, target.instancePath);
-  const template = instance && assets.get(instance["asset-template"]);
-  if (!screen || !instance || !template) {
+  const template = instance?.type === "template" ? getTemplateByPath(instance.src) : null;
+  if (!screen || !instance) {
     throw new Error("The selected asset is no longer available.");
   }
   return { screen, instance, template };
@@ -1960,16 +2676,17 @@ async function copyAssetDetails(target) {
         id: screen.id,
         name: screen.data.name || screen.id
       },
-      selectedAsset: {
+      selectedElement: {
         instancePath: target.instancePath,
-        template: {
+        type: instance.type,
+        ...(template ? { template: {
           id: template.id,
           name: template.data.name || template.id,
           description: template.data.description || "",
           category: template.data.category || "",
           attributes: template.data.attributes || {},
           slots: template.data.slots || []
-        },
+        } } : {}),
         instance
       }
     };
@@ -1984,16 +2701,12 @@ async function copyAssetDetails(target) {
 function confirmDeleteAsset(target) {
   try {
     const { screen, instance, template } = resolveAssetContextTarget(target);
-    if (target.instancePath.length === 1) {
-      showEditorMessage("Cannot delete root layout", "A Screen must keep its root layout. Delete or move its content assets instead.");
-      return;
-    }
-    const instanceName = instance.name || template.data.name || template.id;
+    const instanceName = getElementLabel(instance);
     const screenName = screen.data.name || screen.id;
     const hasNestedAssets = Object.values(instance.slots || {}).some(
       (children) => Array.isArray(children) && children.length > 0
     );
-    const nestedWarning = hasNestedAssets ? " Assets inside its slots will also be deleted." : "";
+    const nestedWarning = hasNestedAssets ? " Elements inside its slots will also be deleted." : "";
     pendingAssetDeletion = { ...target, instancePath: [...target.instancePath] };
     deleteDialogReturnFocus = document.activeElement;
     byId("asset-delete-message").textContent =
@@ -2027,7 +2740,7 @@ async function renderInstanceSlots(root, instance, template, instancePath, scree
   }
   if (instance.slots !== undefined &&
       (!instance.slots || Array.isArray(instance.slots) || typeof instance.slots !== "object")) {
-    throw new Error(`Asset instance "${instance.name || template.id}" slots must be a mapping.`);
+    throw new Error(`Asset "${instance.name || template.id}" slots must be a mapping.`);
   }
   const slots = instance.slots || {};
   const declaredSlots = new Set(template.data.slots.map((slot) => slot.id));
@@ -2042,7 +2755,7 @@ async function renderInstanceSlots(root, instance, template, instancePath, scree
     target.classList.add("openux-drop-slot");
     target.setAttribute("role", "group");
     target.setAttribute("aria-label", `Drop zone: ${slot.name || slot.id}`);
-    target.setAttribute("data-placeholder", `Drop assets into ${slot.name || slot.id}`);
+    target.setAttribute("data-placeholder", `Drop Elements into ${slot.name || slot.id}`);
     if (instancePath.length) {
       target.addEventListener("dragover", (event) => {
         const types = [...event.dataTransfer.types];
@@ -2056,19 +2769,19 @@ async function renderInstanceSlots(root, instance, template, instancePath, scree
         if (!target.contains(event.relatedTarget)) target.classList.remove("drop-target");
       });
       target.addEventListener("drop", (event) => {
-        const assetId = event.dataTransfer.getData(assetDragType);
+        const assetPath = event.dataTransfer.getData(assetDragType);
         const sourcePath = readDraggedInstance(event.dataTransfer);
-        if (!assetId && !sourcePath) return;
+        if (!assetPath && !sourcePath) return;
         event.preventDefault();
         event.stopPropagation();
         target.classList.remove("drop-target");
         if (sourcePath) {
           moveAssetInstance(sourcePath, instancePath, slot.id).catch(showAddAssetError);
-        } else if (!assets.has(assetId)) {
-          showEditorMessage("Could not add asset", `Asset template "${assetId}" is not available in this project.`);
+        } else if (!assetFiles.has(assetPath)) {
+          showEditorMessage("Could not add asset", `Asset "${assetPath}" is not available in this project.`);
         } else {
           paletteAssetDropHandled = true;
-          addAssetToSlot(instancePath, slot.id, assetId).catch(showAddAssetError);
+          addAssetToSlot(instancePath, slot.id, assetPath).catch(showAddAssetError);
         }
       });
     }
@@ -2078,13 +2791,9 @@ async function renderInstanceSlots(root, instance, template, instancePath, scree
       throw new Error(`Layout slot "${slot.id}" contents must be a list.`);
     }
     for (const [childIndex, child] of children.entries()) {
-      const childTemplate = assets.get(child["asset-template"]);
-      if (!childTemplate) {
-        throw new Error(`Layout slot "${slot.id}" references unknown asset template "${child["asset-template"]}".`);
-      }
       const childHost = await renderInstance(
         child,
-        childTemplate,
+        child.type === "template" ? getTemplateByPath(child.src) : null,
         [...instancePath, slot.id, childIndex],
         screenId,
         screenName
@@ -2294,8 +3003,20 @@ function getInstanceValue(instance, template, path) {
 }
 
 function selectInstance(path, assetId) {
+  const keepSpecEditorOpen = viewingSpec;
+  const isCurrentAssetSpec = keepSpecEditorOpen &&
+    activeSpecOwner === "instance" &&
+    sameInstancePath(activeSpecInstancePath, path);
   activeAssetId = assetId;
   activeInstancePath = path;
+  if (keepSpecEditorOpen) {
+    revealInstanceInPreview(path);
+    if (isCurrentAssetSpec) return;
+    createSpecForInstance([...path]).catch((error) =>
+      showEditorMessage("Could not open behavior spec", error.message || String(error))
+    );
+    return;
+  }
   viewingAssetTemplate = false;
   viewingTheme = false;
   viewingProject = false;
@@ -2306,47 +3027,22 @@ function selectInstance(path, assetId) {
   byId("main").classList.remove("spec-editing");
   byId("spec-editor-panel").hidden = true;
   byId("spec-source").oninput = null;
-  findAssetInstances(byId("screen-preview")).forEach((node) => {
-    node.classList.toggle("selected", node.dataset.instancePath === JSON.stringify(path));
-  });
+  revealInstanceInPreview(path);
   updateNavigationSelection();
   renderInspector();
 }
 
 function updateNavigationSelection() {
-  document.querySelectorAll(".screen-option").forEach((button) => {
-    const selected = Number(button.dataset.screenIndex) === activeScreenIndex &&
-      !viewingTheme && !viewingProject && !viewingAssetTemplate &&
-      !(viewingSpec && activeSpecOwner === "project");
+  document.querySelectorAll(".file-tree-file").forEach((button) => {
+    const filePath = button.dataset.projectFile;
+    const action = getProjectFileAction(filePath);
+    const selected = activeProjectFilePath === filePath;
     button.classList.toggle("selected", selected);
     if (selected) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
+    if (action?.kind === "asset") updateAssetTemplateTreeFile(button, action.asset);
   });
-  document.querySelectorAll(".asset-row").forEach((button) => {
-    button.classList.toggle("selected", viewingAssetTemplate && button.dataset.assetId === activeAssetId);
-    const asset = assets.get(button.dataset.assetId);
-    if (asset) {
-      const targetScreen = screens[activeScreenIndex];
-      const requiresRootLayout = targetScreen?.data.assets?.length === 0;
-      const canDrag = Boolean(targetScreen) && (!requiresRootLayout || Boolean(asset.data.slots?.length));
-      button.draggable = canDrag;
-      button.setAttribute(
-        "aria-label",
-        canDrag
-          ? `Edit ${asset.data.name || asset.id} template; drag to add to ${targetScreen.data.name || "current Screen"}`
-          : `Edit ${asset.data.name || asset.id} template`
-      );
-    }
-  });
-  const themeButton = byId("theme-nav");
-  themeButton.classList.toggle("selected", viewingTheme);
-  if (viewingTheme) themeButton.setAttribute("aria-current", "page");
-  else themeButton.removeAttribute("aria-current");
-  const projectButton = byId("project-nav");
-  const projectSelected = viewingProject || (viewingSpec && activeSpecOwner === "project");
-  projectButton.classList.toggle("selected", projectSelected);
-  if (projectSelected) projectButton.setAttribute("aria-current", "page");
-  else projectButton.removeAttribute("aria-current");
+  syncBrowserHistory();
   publishSelection();
 }
 
@@ -2376,9 +3072,11 @@ function renderInspector() {
   } else {
     const screen = screens[activeScreenIndex]?.data;
     if (!screen) return;
-    const instance = getInstanceAtPath({ data: screen }, activeInstancePath);
-    const template = instance && assets.get(instance["asset-template"]);
-    if (instance && template) {
+    const instance = activeInstancePath.length
+      ? getInstanceAtPath({ data: screen }, activeInstancePath)
+      : null;
+    const template = instance?.type === "template" ? getTemplateByPath(instance.src) : null;
+    if (instance) {
       renderInstanceDetails(panel, instance, template);
     } else {
       renderScreenDetails(panel, screen);
@@ -2412,14 +3110,12 @@ function renderPreviewStateDetails(panel) {
     deleteButton.addEventListener("click", () => deletePreviewState(stateId).catch(showFatalError));
     panel.append(deleteButton);
   }
-  appendSection(panel, "Asset visibility");
+  appendSection(panel, "Element visibility");
   let visibleInstances = 0;
   function renderInstanceVisibility(instance, instancePath, depth) {
-    const template = assets.get(instance["asset-template"]);
-    const label = instance.name || template?.data.name || instance["asset-template"];
-    if (instancePath.length > 1) {
-      visibleInstances += 1;
-      appendEditableField(
+    const label = getElementLabel(instance);
+    visibleInstances += 1;
+    appendEditableField(
         panel,
         `${"— ".repeat(depth)}${label}`,
         isInstanceVisible(instance, stateId),
@@ -2433,7 +3129,6 @@ function renderPreviewStateDetails(panel) {
         },
         { checkbox: true }
       );
-    }
     for (const [slotId, children] of Object.entries(instance.slots || {})) {
       if (!Array.isArray(children)) continue;
       children.forEach((child, index) =>
@@ -2441,11 +3136,11 @@ function renderPreviewStateDetails(panel) {
       );
     }
   }
-  (screen.data.assets || []).forEach((instance, index) =>
+  (screen.data.elements || []).forEach((instance, index) =>
     renderInstanceVisibility(instance, [index], 0)
   );
   if (visibleInstances === 0) {
-    appendDetail(panel, "Assets", "This Screen has no nested asset instances.");
+    appendDetail(panel, "Elements", "This Screen has no Elements.");
   }
 }
 
@@ -2505,11 +3200,10 @@ function renderSpecDetails(panel) {
     return;
   }
   const instance = screen && getInstanceAtPath(screen, activeSpecInstancePath);
-  const template = instance && assets.get(instance["asset-template"]);
   appendSection(panel, "Behavior spec");
   appendDetail(panel, "File", activeSpecPath || "Unavailable");
   appendDetail(panel, "Screen", screen?.data.name || screen?.id || "Unavailable");
-  appendDetail(panel, "Asset instance", instance?.name || template?.data.name || template?.id || "Unavailable");
+  appendDetail(panel, "Element", instance ? getElementLabel(instance) : "Unavailable");
   appendDetail(panel, "Format", "Markdown behavior guidance; not executable.");
 }
 
@@ -2572,8 +3266,8 @@ function renderScreenDetails(panel, screen) {
     deleteButton.addEventListener("click", () => deletePreviewState(state.id).catch(showFatalError));
     panel.append(deleteButton);
   }
-  appendSection(panel, "Assets in Screen");
-  renderScreenInstanceTree(panel, screen.assets || [], [], 0, activeStateId);
+  appendSection(panel, "Elements in Screen");
+  renderScreenInstanceTree(panel, screen.elements || [], [], 0, activeStateId);
 }
 
 function renderThemeDetails(panel) {
@@ -2698,7 +3392,9 @@ function renderReviewControls(panel) {
 }
 
 function renderInstanceDetails(panel, instance, template) {
-  appendSection(panel, "Selected asset");
+  appendSection(panel, "Selected Element");
+  appendDetail(panel, "Element ID", instance.id);
+  appendDetail(panel, "Type", instance.type);
   appendEditableField(panel, "Name", instance.name, (value) => {
     instance.name = value;
     markEdited(screens[activeScreenIndex].file);
@@ -2708,9 +3404,26 @@ function renderInstanceDetails(panel, instance, template) {
     instance.description = value;
     markEdited(screens[activeScreenIndex].file);
     refreshActiveView();
-  }, { multiline: true   });
-  panel.append(element("span", "template-tag", `${template.data.name || template.id} template`));
-  if (activeInstancePath.length > 1) {
+  }, { multiline: true });
+  if (instance.type === "template" && template) {
+    panel.append(element("span", "template-tag", `${template.data.name || template.id} template`));
+    appendDetail(panel, "Asset file", template.htmlFile);
+  } else if (instance.type === "image") {
+    appendDetail(panel, "Asset file", instance.src);
+    appendEditableField(panel, "Alt text", instance.alt || "", (value) => {
+      instance.alt = value;
+      markEdited(screens[activeScreenIndex].file);
+      refreshActiveView();
+    });
+  } else if (instance.type === "text") {
+    appendEditableField(panel, "Text", instance.content || "", (value) => {
+      instance.content = value;
+      markEdited(screens[activeScreenIndex].file);
+      refreshActiveView();
+    }, { multiline: true });
+    appendDetail(panel, "HTML tag", instance.tag || "p");
+  }
+  if (activeInstancePath.length > 0) {
     const screen = screens[activeScreenIndex];
     const stateId = getActivePreviewStateId(screen.data);
     const state = getScreenPreviewStates(screen.data).find((candidate) => candidate.id === stateId);
@@ -2730,13 +3443,18 @@ function renderInstanceDetails(panel, instance, template) {
       { checkbox: true }
     );
   }
-  if (template.data.slots) {
+  if (template?.data.slots) {
     appendSection(panel, "Drop zones");
     for (const slot of template.data.slots) {
-      appendDetail(panel, slot.name || slot.id, "Drag assets into this zone.");
+      appendDetail(panel, slot.name || slot.id, "Drag Elements into this zone.");
     }
   }
-  for (const [name, definition] of Object.entries(template.data.attributes || {})) {
+  appendEditableField(panel, "AI note (optional)", instance.note || "", (value) => {
+    if (value) instance.note = value;
+    else delete instance.note;
+    markEdited(screens[activeScreenIndex].file);
+  }, { multiline: true });
+  for (const [name, definition] of Object.entries(template?.data.attributes || {})) {
     const value = Object.hasOwn(instance.attributes || {}, name)
       ? instance.attributes[name]
       : definition.default;
@@ -2755,18 +3473,14 @@ function renderInstanceDetails(panel, instance, template) {
       appendDetail(panel, fieldLabel, value);
     }
   }
-  appendEditableField(panel, "AI note (optional)", instance.note || "", (value) => {
-    if (value) instance.note = value;
-    else delete instance.note;
-    markEdited(screens[activeScreenIndex].file);
-  }, { multiline: true });
   appendSection(panel, "Behavior spec");
-  if (instance.spec) {
-    appendDetail(panel, "File", instance.spec);
+  const specPath = getAssetSpecPath(screens[activeScreenIndex], instance);
+  if (specPath) {
+    appendDetail(panel, "File", specPath);
     const openSpec = element("button", "spec-action-button", "Open behavior spec");
     openSpec.type = "button";
     openSpec.addEventListener("click", () =>
-      renderSpecEditor(instance.spec, activeInstancePath).catch(showFatalError)
+      renderSpecEditor(specPath, activeInstancePath).catch(showFatalError)
     );
     panel.append(openSpec);
   } else {
@@ -2780,15 +3494,12 @@ function renderInstanceDetails(panel, instance, template) {
     );
     panel.append(createSpec);
   }
-  const deleteButton = element("button", "delete-instance-button", "Delete asset instance");
+  const deleteButton = element("button", "delete-instance-button", "Delete Element");
   deleteButton.type = "button";
-  deleteButton.title = activeInstancePath.length === 1
-    ? "A Screen's root layout cannot be deleted."
-    : "";
   deleteButton.addEventListener("click", () => confirmDeleteAsset({
     screenIndex: activeScreenIndex,
     instancePath: [...activeInstancePath],
-    assetId: template.id
+    assetId: instance.src || null
   }));
   panel.append(deleteButton);
 }
@@ -2949,9 +3660,15 @@ function appendEditableField(parent, label, value, onChange, options = {}) {
   parent.append(wrapper);
 }
 
-function markEdited(filePath) {
+function markEdited(filePath, options = {}) {
   if (typeof filePath !== "string" || !filePath) {
     throw new Error("Edited project data must be associated with its source file.");
+  }
+  const screen = screens.find((entry) => entry.file === filePath);
+  if (screen) {
+    screen.yamlSerializeVersion += 1;
+    if (options.yamlSource) screen.yamlSourceMode = "source";
+    else if (!invalidYamlFiles.has(filePath)) screen.yamlSourceMode = "data";
   }
   dirtyFiles.set(filePath, ++editVersion);
   hasEdits = true;
@@ -2970,13 +3687,15 @@ function clearEdited(filePath) {
 }
 
 function markAssetTemplateEdited(template) {
-  const filePath = `${template.directory}/asset.yml`;
+  const filePath = template.htmlFile;
   template.yamlParseVersion += 1;
   clearTimeout(template.yamlTimer);
   invalidYamlFiles.delete(filePath);
   template.yamlSourceMode = "data";
-  setAssetYamlStatus(template, "Updating YAML source...");
+  pendingAssetSerializations.add(template.id);
+  setAssetDocumentStatus(template, "Updating YAML front matter...");
   markEdited(filePath);
+  updateSaveControls();
   const version = ++template.yamlSerializeVersion;
   fetch("/api/yaml/stringify", {
     method: "POST",
@@ -2987,14 +3706,25 @@ function markAssetTemplateEdited(template) {
     if (!response.ok) throw new Error(result.error || `YAML serialization failed (HTTP ${response.status}).`);
     if (version !== template.yamlSerializeVersion || template.yamlSourceMode !== "data") return;
     template.yamlSource = result.source;
+    template.documentSource = sharedValidation.formatAssetDocument(result.source, template.html);
     template.yamlSourceMode = "source";
-    setAssetYamlStatus(template, "YAML source updated.");
+    invalidYamlFiles.delete(filePath);
+    setAssetDocumentStatus(template, "YAML front matter updated.");
     if (viewingAssetTemplate && activeAssetId === template.id) {
-      byId("asset-yaml-source").value = result.source;
+      byId("asset-document-source").value = template.documentSource;
     }
   }).catch((error) => {
     if (version !== template.yamlSerializeVersion) return;
-    setAssetYamlStatus(template, `Could not update YAML source: ${error.message || String(error)}`, true);
+    invalidYamlFiles.set(filePath, error.message || String(error));
+    setAssetDocumentStatus(
+      template,
+      `Could not update YAML front matter: ${error.message || String(error)}`,
+      true
+    );
+  }).finally(() => {
+    if (version !== template.yamlSerializeVersion) return;
+    pendingAssetSerializations.delete(template.id);
+    updateSaveControls();
   });
 }
 
@@ -3002,7 +3732,9 @@ function updateSaveControls() {
   const saveButton = byId("save-project");
   if (!saveButton) return;
   const invalidYamlMessage = invalidYamlFiles.values().next().value;
-  saveButton.disabled = isSaving || dirtyFiles.size === 0 || invalidYamlFiles.size > 0;
+  const assetSerializationPending = pendingAssetSerializations.size > 0;
+  saveButton.disabled = isSaving || dirtyFiles.size === 0 ||
+    invalidYamlFiles.size > 0 || assetSerializationPending;
   saveButton.textContent = isSaving
     ? "Saving..."
     : dirtyFiles.size > 0
@@ -3010,14 +3742,16 @@ function updateSaveControls() {
       : "Save";
   saveButton.title = invalidYamlMessage
     ? `Fix invalid YAML before saving: ${invalidYamlMessage}`
-    : "";
+    : assetSerializationPending
+      ? "Wait for Asset front matter to finish updating."
+      : "";
 }
 
 function getProjectFileData(filePath) {
   if (filePath === "project.yml") return project;
   const screen = screens.find((entry) => entry.file === filePath);
   if (screen) return screen.data;
-  const asset = [...assets.values()].find((entry) => `${entry.directory}/asset.yml` === filePath);
+  const asset = [...assets.values()].find((entry) => entry.htmlFile === filePath);
   if (asset) return asset.data;
   if (project.theme === filePath) return theme;
   throw new Error(`Edited project file "${filePath}" is not available to save.`);
@@ -3025,7 +3759,7 @@ function getProjectFileData(filePath) {
 
 function getProjectFileSaveEntry(filePath) {
   const assetHtml = [...assets.values()].find((entry) => entry.htmlFile === filePath);
-  if (assetHtml) return { path: filePath, content: assetHtml.html };
+  if (assetHtml) return { path: filePath, content: assetHtml.documentSource };
   if (specSources.has(filePath)) {
     return {
       path: filePath,
@@ -3033,9 +3767,13 @@ function getProjectFileSaveEntry(filePath) {
       content: specSources.get(filePath)
     };
   }
-  const assetYaml = [...assets.values()].find((entry) => `${entry.directory}/asset.yml` === filePath);
-  if (assetYaml?.yamlSourceMode === "source") {
-    return { path: filePath, content: assetYaml.yamlSource };
+  const screen = screens.find((entry) => entry.file === filePath);
+  if (screen?.yamlSourceMode === "source") {
+    return {
+      path: filePath,
+      ...(createdScreenFiles.has(filePath) ? { create: true } : {}),
+      content: screen.yamlSource
+    };
   }
   if (createdScreenFiles.has(filePath)) {
     return {
@@ -3052,7 +3790,7 @@ function getProjectFileSaveEntry(filePath) {
 
 async function saveProjectChanges() {
   if (isSaving || dirtyFiles.size === 0) return;
-  if (invalidYamlFiles.size > 0) {
+  if (invalidYamlFiles.size > 0 || pendingAssetSerializations.size > 0) {
     updateSaveControls();
     return;
   }
@@ -3074,22 +3812,38 @@ async function saveProjectChanges() {
       createdSpecDrafts.delete(filePath);
       createdSpecFiles.delete(filePath);
       specSources.delete(filePath);
+      assetSpecOwners.delete(filePath);
       clearEdited(filePath);
       continue;
     }
-    instance.spec = filePath;
     createdSpecFiles.add(filePath);
   }
   for (const screen of screens) {
     try {
+      validateScreenAssetIds(screen);
       const states = sharedValidation.validatePreviewStates(screen.data, screen.file);
       const linkedSpecPaths = new Set();
       if (screen.data.spec) {
         sharedValidation.validateSpecPath(screen.data.spec);
         linkedSpecPaths.add(screen.data.spec);
       }
-      for (const instance of screen.data.assets || []) {
-        collectInstanceSpecPaths(instance, linkedSpecPaths);
+      const elementSpecPrefix = `screens/${screen.id}/specs/element-`;
+      const linkedElementIds = new Set();
+      for (const [specPath, content] of specSources) {
+        if (!specPath.startsWith(elementSpecPrefix)) continue;
+        const elementId = sharedValidation.validateElementSpecHeader(content, specPath);
+        sharedValidation.validateElementSpecPath(specPath, elementId);
+        const instancePath = findInstancePathById(screen.data.elements || [], elementId);
+        if (!instancePath) {
+          assetSpecOwners.delete(specPath);
+          continue;
+        }
+        if (linkedElementIds.has(elementId)) {
+          throw new Error(`${specPath}: Element "${elementId}" has more than one behavior spec.`);
+        }
+        linkedElementIds.add(elementId);
+        assetSpecOwners.set(specPath, { screenFile: screen.file, elementId, instancePath });
+        linkedSpecPaths.add(specPath);
       }
       const linkedSpecs = [];
       for (const specPath of linkedSpecPaths) {
@@ -3112,6 +3866,7 @@ async function saveProjectChanges() {
     { version, ...getProjectFileSaveEntry(filePath) }
   ]));
   for (const [filePath, draft] of createdSpecDrafts) {
+    if (draft.owner === "instance") continue;
     const linkFile = draft.owner === "project" ? "project.yml" : draft.screenFile;
     if (specSources.get(filePath) === draft.initialContent || saveEntries.has(linkFile)) continue;
     saveEntries.set(linkFile, {
@@ -3154,23 +3909,31 @@ async function saveProjectChanges() {
           const screen = screens.find((entry) => entry.file === draft.screenFile);
           if (draft.owner === "screen") {
             if (screen) screen.data.spec = file.path;
-          } else {
-            const instance = screen && getInstanceAtPath(screen, draft.instancePath);
-            if (instance) instance.spec = file.path;
           }
         }
         createdSpecDrafts.delete(file.path);
         if (activeSpecPath === file.path) byId("spec-status").textContent = "Saved.";
       }
-      if (dirtyFiles.get(file.path) === file.version) dirtyFiles.delete(file.path);
+      const savedCurrentVersion = dirtyFiles.get(file.path) === file.version;
+      if (savedCurrentVersion) dirtyFiles.delete(file.path);
+      const savedScreen = screens.find((entry) => entry.file === file.path);
+      if (savedScreen && savedCurrentVersion) setScreenYamlStatus(savedScreen, "Saved.");
     }
     const savedCopyIds = new Set(copySnapshot.map((copy) => copy.targetId));
+    const updatedFilePaths = new Set(projectFilePaths);
+    for (const file of snapshot) updatedFilePaths.add(file.path);
+    for (const copy of copySnapshot) {
+      const template = assets.get(copy.targetId);
+      if (template) updatedFilePaths.add(template.htmlFile);
+    }
+    projectFilePaths = [...updatedFilePaths];
     for (let index = pendingAssetCopies.length - 1; index >= 0; index -= 1) {
       if (savedCopyIds.has(pendingAssetCopies[index].targetId)) {
         pendingAssetCopies.splice(index, 1);
       }
     }
     hasEdits = dirtyFiles.size > 0;
+    renderNavigation();
     updateSaveControls();
     if (!hasEdits) {
       showEditorMessage("Changes saved", `${result.saved.length} project file${result.saved.length === 1 ? "" : "s"} saved to openux/.`);
@@ -3195,7 +3958,7 @@ async function refreshActiveView() {
     const instancePath = [...activeInstancePath];
     await renderScreen(screenIndex);
     const instance = getInstanceAtPath(screens[screenIndex], instancePath);
-    if (instance) selectInstance(instancePath, instance["asset-template"]);
+    if (instance) selectInstance(instancePath, instance.src || null);
   } catch (error) {
     showFatalError(error);
   }
@@ -3214,21 +3977,74 @@ byId("reset-project").addEventListener("click", async () => {
 byId("create-screen").addEventListener("click", () =>
   createScreen().catch((error) => showEditorMessage("Could not create Screen", error.message || String(error)))
 );
-byId("project-nav").addEventListener("click", renderProjectOverview);
+byId("screen-view-preview").addEventListener("click", () => setScreenViewMode("preview"));
+byId("screen-view-yaml").addEventListener("click", () => setScreenViewMode("yaml"));
+byId("screen-selector-toggle").addEventListener("click", () =>
+  setScreenSelectorOpen(byId("screen-selector-panel").hidden)
+);
+byId("screen-selector-search").addEventListener("input", renderScreenSelector);
+byId("screen-selector-search").addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    setScreenSelectorOpen(false, true);
+  } else if (event.key === "ArrowDown") {
+    event.preventDefault();
+    byId("screen-selector-options").querySelector("button")?.focus();
+  } else if (event.key === "Enter") {
+    const firstOption = byId("screen-selector-options").querySelector("button");
+    if (firstOption) {
+      event.preventDefault();
+      firstOption.click();
+    }
+  }
+});
+byId("screen-selector-options").addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    setScreenSelectorOpen(false, true);
+    return;
+  }
+  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  const options = [...byId("screen-selector-options").querySelectorAll("button")];
+  if (!options.length) return;
+  const currentIndex = options.indexOf(document.activeElement);
+  if (event.key === "ArrowUp" && currentIndex === 0) {
+    byId("screen-selector-search").focus();
+    return;
+  }
+  const nextIndex = event.key === "Home"
+    ? 0
+    : event.key === "End"
+      ? options.length - 1
+      : Math.max(0, Math.min(options.length - 1, currentIndex + (event.key === "ArrowDown" ? 1 : -1)));
+  options[nextIndex]?.focus();
+});
+document.addEventListener("pointerdown", (event) => {
+  if (!byId("screen-quick-selector").contains(event.target) &&
+      !byId("screen-selector-panel").hidden) {
+    setScreenSelectorOpen(false);
+  }
+});
 byId("save-project").addEventListener("click", () => saveProjectChanges());
+byId("add-text-element").addEventListener("click", () =>
+  addTextElement().catch((error) =>
+    showEditorMessage("Could not add text Element", error.message || String(error))
+  )
+);
 
-byId("theme-nav").addEventListener("click", () => {
+function renderThemeView(filePath = project?.theme) {
   if (!theme) return;
+  discardUneditedActiveSpecDraft();
+  activeProjectFilePath = filePath || project.theme;
   hidePreviewStateControls();
   clearTimeout(assetPreviewTimer);
   assetPreviewTimer = null;
   assetPreviewVersion += 1;
   byId("main").classList.remove("asset-editing");
   byId("main").classList.remove("spec-editing");
-  byId("asset-html-editor-panel").hidden = true;
-  byId("asset-html-source").oninput = null;
-  byId("asset-yaml-editor-panel").hidden = true;
-  byId("asset-yaml-source").oninput = null;
+  byId("asset-document-editor-panel").hidden = true;
+  byId("asset-document-source").oninput = null;
   byId("spec-editor-panel").hidden = true;
   byId("spec-source").oninput = null;
   viewingAssetTemplate = false;
@@ -3245,13 +4061,14 @@ byId("theme-nav").addEventListener("click", () => {
   hideEditorMessage();
   updateNavigationSelection();
   renderInspector();
-});
+}
 
 byId("asset-context-edit-template").addEventListener("click", () => {
   const target = assetContextMenuTarget;
   closeAssetContextMenu();
   if (!target || target.screenIndex !== activeScreenIndex) return;
-  renderAssetTemplate(target.assetId).catch(showFatalError);
+  const template = getTemplateByPath(target.assetId);
+  if (template) renderAssetTemplate(template.id).catch(showFatalError);
 });
 byId("asset-context-copy-details").addEventListener("click", () => {
   const target = assetContextMenuTarget;
@@ -3307,6 +4124,22 @@ document.addEventListener("keydown", (event) => {
     items[nextIndex].focus();
   }
 });
+window.addEventListener("popstate", (event) => {
+  if (isRenderOnly) return;
+  const savedSelection = event.state?.openuxEditor?.selection;
+  const selection = savedSelection && typeof savedSelection === "object"
+    ? savedSelection
+    : selectionFromLocation();
+  const wasHistoryUpdateSuppressed = historyUpdateSuppressed;
+  historyUpdateSuppressed = true;
+  const restore = selection ? restoreUiSelection(selection) : loadProject();
+  Promise.resolve(restore)
+    .catch((error) => showEditorMessage("Could not restore browser history entry", error.message || String(error)))
+    .finally(() => {
+      historyUpdateSuppressed = wasHistoryUpdateSuppressed;
+      if (!wasHistoryUpdateSuppressed) syncBrowserHistory(true);
+    });
+});
 window.addEventListener("resize", () => closeAssetContextMenu());
 window.addEventListener("scroll", () => closeAssetContextMenu(), true);
 
@@ -3351,4 +4184,4 @@ if (typeof systemThemeQuery?.addEventListener === "function") {
   systemThemeQuery?.addListener?.(handleSystemThemeChange);
 }
 
-loadProject();
+loadProject(selectionFromLocation());

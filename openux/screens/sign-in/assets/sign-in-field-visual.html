@@ -1,0 +1,62 @@
+---
+id: sign-in-field-visual
+name: Sign-in Field Preview
+description: A static, editable field-shaped visual; it does not accept or collect input.
+category: Forms/Sign-in
+attributes:
+  label:
+    type: string
+    default: Email address
+    overridable: true
+  preview-value:
+    type: string
+    default: name@example.com
+    overridable: true
+  hint:
+    type: string
+    default: EMAIL
+    overridable: true
+  icon:
+    type: string
+    default: "@"
+    overridable: true
+---
+<style>
+  .openux-sign-in-field { margin-top: 17px; font-family: Inter, "Segoe UI", Arial, sans-serif; }
+  .openux-sign-in-field__label {
+    display: block;
+    margin-bottom: 7px;
+    color: var(--theme-ink, #1e293b);
+    font-size: 11px;
+    font-weight: 650;
+  }
+  .openux-sign-in-field__visual {
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 46px;
+    padding: 0 13px;
+    border: 1px solid var(--theme-border, #dfe4ed);
+    border-radius: 9px;
+    background: var(--theme-surface, #fff);
+    color: var(--theme-ink, #1e293b);
+    font-size: 12px;
+  }
+  .openux-sign-in-field__value { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .openux-sign-in-field__icon { color: var(--theme-muted, #718096); font-size: 14px; }
+  .openux-sign-in-field__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .openux-sign-in-field__hint { color: var(--theme-muted, #718096); font-size: 10px; }
+  .openux-sign-in-field__hint:empty { display: none; }
+  .openux-sign-in-field__dots { letter-spacing: .17em; }
+</style>
+<div class="openux-sign-in-field">
+  <span class="openux-sign-in-field__label">${attributes.label}</span>
+  <div class="openux-sign-in-field__visual" aria-label="Decorative ${attributes.label} field preview">
+    <span class="openux-sign-in-field__value">
+      <span class="openux-sign-in-field__icon" aria-hidden="true">${attributes.icon}</span>
+      <span class="openux-sign-in-field__text">${attributes.preview-value}</span>
+    </span>
+    <span class="openux-sign-in-field__hint" aria-hidden="true">${attributes.hint}</span>
+  </div>
+</div>

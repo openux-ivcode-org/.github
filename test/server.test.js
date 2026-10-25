@@ -5,19 +5,27 @@ const path = require("node:path");
 const test = require("node:test");
 const YAML = require("yaml");
 const { createServer } = require("../server");
+const validation = require("../validation");
+
+function assetDocument(data, body) {
+  return validation.formatAssetDocument(YAML.stringify(data), body);
+}
 
 async function withServer(run) {
   const rootDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "openux-server-test-"));
   await fs.mkdir(path.join(rootDirectory, "openux"), { recursive: true });
   await fs.mkdir(path.join(rootDirectory, "openux", "screens"), { recursive: true });
-  await fs.mkdir(path.join(rootDirectory, "openux", "assets", "demo"), { recursive: true });
+  await fs.mkdir(path.join(rootDirectory, "openux", "assets"), { recursive: true });
   await fs.writeFile(path.join(rootDirectory, "index.html"), "<h1>Editor</h1>");
   await fs.writeFile(path.join(rootDirectory, "app.js"), "window.editor = true;");
   await fs.writeFile(path.join(rootDirectory, "openux", "project.yml"), "name: Example\n");
   await fs.writeFile(path.join(rootDirectory, "openux", "screen.yml"), "name: Before\n");
-  await fs.writeFile(path.join(rootDirectory, "openux", "assets", "demo", "asset.html"), "<p>Before</p>");
   await fs.writeFile(
-    path.join(rootDirectory, "openux", "assets", "demo", "preview image.png"),
+    path.join(rootDirectory, "openux", "assets", "demo.html"),
+    assetDocument({ id: "demo", name: "Demo", description: "Test asset." }, "<p>Before</p>")
+  );
+  await fs.writeFile(
+    path.join(rootDirectory, "openux", "assets", "preview image.png"),
     Buffer.from("image")
   );
   const server = createServer({ rootDirectory });
@@ -37,7 +45,7 @@ test("serves the editor root and the example project", async () => {
   await withServer(async ({ baseUrl }) => {
     const editor = await fetch(baseUrl);
     const project = await fetch(`${baseUrl}/openux/project.yml`);
-    const encodedResource = await fetch(`${baseUrl}/openux/assets/demo/preview%20image.png`);
+    const encodedResource = await fetch(`${baseUrl}/openux/assets/preview%20image.png`);
     const traversal = await fetch(`${baseUrl}/openux/%2e%2e%2findex.html`);
     assert.equal(editor.status, 200);
     assert.match(await editor.text(), /Editor/);
@@ -47,6 +55,24 @@ test("serves the editor root and the example project", async () => {
     assert.equal(encodedResource.headers.get("content-type"), "image/png");
     assert.deepEqual(Buffer.from(await encodedResource.arrayBuffer()), Buffer.from("image"));
     assert.equal(traversal.status, 404);
+  });
+});
+
+test("lists project files without exposing hidden paths", async () => {
+  await withServer(async ({ baseUrl, rootDirectory }) => {
+    await fs.mkdir(path.join(rootDirectory, "openux", "screens", "home", "specs"), { recursive: true });
+    await fs.writeFile(path.join(rootDirectory, "openux", "screens", "home", "screen.yml"), "name: Home\n");
+    await fs.writeFile(path.join(rootDirectory, "openux", ".private.yml"), "secret: true\n");
+
+    const response = await fetch(`${baseUrl}/api/files`);
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).files, [
+      "assets/demo.html",
+      "assets/preview image.png",
+      "project.yml",
+      "screen.yml",
+      "screens/home/screen.yml"
+    ]);
   });
 });
 
@@ -63,7 +89,7 @@ test("reports server status and browser selection and notifies connected browser
 
     const selection = {
       view: "screen",
-      screen: { id: "home", name: "Home", file: "screens/home.yml" }
+      screen: { id: "home", name: "Home", file: "screens/home/screen.yml" }
     };
     const published = await fetch(`${baseUrl}/api/selection`, {
       method: "POST",
@@ -136,16 +162,16 @@ test("creates new Screen YAML files and updates the project manifest", async () 
             path: "project.yml",
             data: {
               name: "Example",
-              screens: [{ id: "new-screen", file: "screens/new-screen.yml" }]
+              screens: [{ id: "new-screen", file: "screens/new-screen/screen.yml" }]
             }
           },
           {
-            path: "screens/new-screen.yml",
+            path: "screens/new-screen/screen.yml",
             create: true,
             data: {
               name: "New Screen",
               description: "",
-              assets: []
+              elements: []
             }
           }
         ]
@@ -153,21 +179,24 @@ test("creates new Screen YAML files and updates the project manifest", async () 
     });
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), {
-      saved: ["project.yml", "screens/new-screen.yml"]
+      saved: ["project.yml", "screens/new-screen/screen.yml"]
     });
     assert.deepEqual(
       YAML.parse(await fs.readFile(path.join(rootDirectory, "openux", "project.yml"), "utf8")),
       {
         name: "Example",
-        screens: [{ id: "new-screen", file: "screens/new-screen.yml" }]
+        screens: [{ id: "new-screen", file: "screens/new-screen/screen.yml" }]
       }
     );
     assert.deepEqual(
-      YAML.parse(await fs.readFile(path.join(rootDirectory, "openux", "screens", "new-screen.yml"), "utf8")),
+      YAML.parse(await fs.readFile(
+        path.join(rootDirectory, "openux", "screens", "new-screen", "screen.yml"),
+        "utf8"
+      )),
       {
         name: "New Screen",
         description: "",
-        assets: []
+        elements: []
       }
     );
 
@@ -176,9 +205,9 @@ test("creates new Screen YAML files and updates the project manifest", async () 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         files: [{
-          path: "screens/new-screen.yml",
+          path: "screens/new-screen/screen.yml",
           create: true,
-          data: { name: "Overwrite", assets: [] }
+          data: { name: "Overwrite", elements: [] }
         }]
       })
     });
@@ -189,9 +218,9 @@ test("creates new Screen YAML files and updates the project manifest", async () 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         files: [{
-          path: "assets/demo/asset.yml",
+          path: "assets/demo.html",
           create: true,
-          data: { id: "demo" }
+          content: assetDocument({ id: "demo", name: "Demo", description: "Test asset." }, "<p>Demo</p>")
         }]
       })
     });
@@ -199,34 +228,50 @@ test("creates new Screen YAML files and updates the project manifest", async () 
   });
 });
 
-test("saves HTML source only inside an asset directory", async () => {
+test("saves HTML source only as a named Asset template file", async () => {
   await withServer(async ({ baseUrl, rootDirectory }) => {
     const response = await fetch(`${baseUrl}/api/save`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        files: [{ path: "assets/demo/asset.html", content: "<p>After</p>" }]
+        files: [{
+          path: "assets/demo.html",
+          content: assetDocument({ id: "demo", name: "Demo", description: "Test asset." }, "<p>After</p>")
+        }]
       })
     });
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { saved: ["assets/demo/asset.html"] });
+    assert.deepEqual(await response.json(), { saved: ["assets/demo.html"] });
     assert.equal(
-      await fs.readFile(path.join(rootDirectory, "openux", "assets", "demo", "asset.html"), "utf8"),
-      "<p>After</p>"
+      await fs.readFile(path.join(rootDirectory, "openux", "assets", "demo.html"), "utf8"),
+      assetDocument({ id: "demo", name: "Demo", description: "Test asset." }, "<p>After</p>")
     );
 
     const rejected = await fetch(`${baseUrl}/api/save`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        files: [{ path: "screens/screen.html", content: "<p>No</p>" }]
+        files: [{ path: "screens/screen.html", content: assetDocument({
+          id: "screen",
+          name: "Screen",
+          description: ""
+        }, "<p>No</p>") }]
       })
     });
     assert.equal(rejected.status, 400);
+
+    const invalidDocument = await fetch(`${baseUrl}/api/save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        files: [{ path: "assets/demo.html", content: "<p>Missing header</p>" }]
+      })
+    });
+    assert.equal(invalidDocument.status, 400);
   });
 });
 
-test("copies page-specific asset directories on save and assigns a new asset ID", async () => {
+test("copies page-specific Asset template files and resources on save", async () => {
   await withServer(async ({ baseUrl, rootDirectory }) => {
     const projectRoot = path.join(rootDirectory, "openux");
     await fs.mkdir(path.join(projectRoot, "screens"), { recursive: true });
@@ -234,31 +279,25 @@ test("copies page-specific asset directories on save and assigns a new asset ID"
       path.join(projectRoot, "project.yml"),
       YAML.stringify({
         name: "Example",
-        screens: [{ id: "source", file: "screens/source.yml" }],
-        assets: [{ id: "demo", directory: "assets/demo", screen: "source" }],
+        screens: [{ id: "source", file: "screens/source/screen.yml" }],
         theme: "theme/theme.yml"
       })
     );
-    await fs.writeFile(path.join(projectRoot, "screens/source.yml"), "name: Source\nassets: []\n");
+    const sourceAssetDirectory = path.join(projectRoot, "screens", "source", "assets");
+    await fs.mkdir(sourceAssetDirectory, { recursive: true });
+    await fs.writeFile(path.join(projectRoot, "screens", "source", "screen.yml"), "name: Source\nelements: []\n");
     await fs.writeFile(
-      path.join(projectRoot, "assets", "demo", "asset.yml"),
-      "id: demo\nname: Demo\n"
+      path.join(sourceAssetDirectory, "demo.html"),
+      assetDocument({ id: "demo", name: "Demo", description: "Test asset." }, '<p><img src="preview image.png"></p>')
     );
+    await fs.writeFile(path.join(sourceAssetDirectory, "preview image.png"), Buffer.from("image"));
+    await fs.writeFile(path.join(sourceAssetDirectory, "edited image.png"), Buffer.from("edited image"));
 
     const nextProject = {
       name: "Example",
       screens: [
-        { id: "source", file: "screens/source.yml" },
-        { id: "destination", file: "screens/destination.yml" }
-      ],
-      assets: [
-        { id: "demo", directory: "assets/demo", screen: "source" },
-        {
-          id: "destination-demo",
-          directory: "assets/destination-demo",
-          screen: "destination",
-          "copied-from": "demo"
-        }
+        { id: "source", file: "screens/source/screen.yml" },
+        { id: "destination", file: "screens/destination/screen.yml" }
       ],
       theme: "theme/theme.yml"
     };
@@ -268,22 +307,29 @@ test("copies page-specific asset directories on save and assigns a new asset ID"
       body: JSON.stringify({
         files: [
           { path: "project.yml", data: nextProject },
-          { path: "assets/destination-demo/asset.yml", content: "id: destination-demo\nname: Edited Demo\n" },
-          { path: "assets/destination-demo/asset.html", content: "<p>Edited</p>" },
           {
-            path: "screens/destination.yml",
+            path: "screens/destination/assets/destination-demo.html",
+            content: assetDocument({
+              id: "destination-demo",
+              name: "Edited Demo",
+              description: "Edited copy."
+            }, '<p><img src="edited image.png" alt="Edited"></p>')
+          },
+          {
+            path: "screens/destination/screen.yml",
             create: true,
             data: {
               name: "Destination",
-              assets: [{ "asset-template": "destination-demo" }]
+              elements: [{ id: "destination-demo", type: "template", src: "screens/destination/assets/destination-demo.html" }]
             }
           }
         ],
         assetCopies: [{
           sourceId: "demo",
-          sourceDirectory: "assets/demo",
+          sourceScreen: "source",
+          sourceFile: "screens/source/assets/demo.html",
           targetId: "destination-demo",
-          targetDirectory: "assets/destination-demo",
+          targetFile: "screens/destination/assets/destination-demo.html",
           targetScreen: "destination"
         }]
       })
@@ -292,32 +338,41 @@ test("copies page-specific asset directories on save and assigns a new asset ID"
     assert.deepEqual(await response.json(), {
       saved: [
         "project.yml",
-        "assets/destination-demo/asset.yml",
-        "assets/destination-demo/asset.html",
-        "screens/destination.yml"
+        "screens/destination/assets/destination-demo.html",
+        "screens/destination/screen.yml"
       ],
       copied: ["destination-demo"]
     });
-    assert.equal(
-      YAML.parse(await fs.readFile(path.join(projectRoot, "assets", "destination-demo", "asset.yml"), "utf8")).name,
-      "Edited Demo"
+    const copiedAssetSource = await fs.readFile(
+      path.join(projectRoot, "screens", "destination", "assets", "destination-demo.html"),
+      "utf8"
     );
-    assert.equal(
-      await fs.readFile(path.join(projectRoot, "assets", "destination-demo", "asset.html"), "utf8"),
-      "<p>Edited</p>"
-    );
+    const copiedAsset = validation.splitAssetDocument(copiedAssetSource, "destination Asset");
+    assert.equal(YAML.parse(copiedAsset.header).name, "Edited Demo");
+    assert.equal(copiedAsset.body, '<p><img src="edited image.png" alt="Edited"></p>');
     assert.deepEqual(
-      await fs.readFile(path.join(projectRoot, "assets", "destination-demo", "preview image.png")),
-      Buffer.from("image")
+      await fs.readFile(path.join(
+        projectRoot,
+        "screens",
+        "destination",
+        "assets",
+        "edited image.png"
+      )),
+      Buffer.from("edited image")
     );
-    assert.equal(
-      YAML.parse(await fs.readFile(path.join(projectRoot, "assets", "demo", "asset.yml"), "utf8")).id,
-      "demo"
-    );
+    await assert.rejects(fs.access(path.join(
+      projectRoot,
+      "screens",
+      "destination",
+      "assets",
+      "preview image.png"
+    )));
+    const sourceAssetSource = await fs.readFile(path.join(sourceAssetDirectory, "demo.html"), "utf8");
+    assert.equal(YAML.parse(validation.splitAssetDocument(sourceAssetSource).header).id, "demo");
   });
 });
 
-test("creates and saves Markdown behavior specs only under specs/", async () => {
+test("creates and saves project, Screen, and Element behavior specs", async () => {
   await withServer(async ({ baseUrl, rootDirectory }) => {
     const content = [
       "# Sign-in button",
@@ -368,6 +423,35 @@ test("creates and saves Markdown behavior specs only under specs/", async () => 
     });
     assert.equal(update.status, 200);
     assert.equal(await fs.readFile(specPath, "utf8"), updatedContent);
+
+    const screenSpecPath = "screens/sign-in/specs/element-sign-in-button.md";
+    const assetSpecContent = `---\nelement-id: sign-in-button\n---\n\n${content}`;
+    const screenSpecCreate = await fetch(`${baseUrl}/api/save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        files: [{ path: screenSpecPath, create: true, content: assetSpecContent }]
+      })
+    });
+    assert.equal(screenSpecCreate.status, 200);
+    assert.deepEqual(await screenSpecCreate.json(), { saved: [screenSpecPath] });
+    assert.equal(
+      await fs.readFile(path.join(rootDirectory, "openux", ...screenSpecPath.split("/")), "utf8"),
+      assetSpecContent
+    );
+
+    const invalidAssetHeader = await fetch(`${baseUrl}/api/save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        files: [{
+          path: "screens/sign-in/specs/element-wrong-name.md",
+          create: true,
+          content
+        }]
+      })
+    });
+    assert.equal(invalidAssetHeader.status, 400);
 
     const invalidContent = await fetch(`${baseUrl}/api/save`, {
       method: "POST",

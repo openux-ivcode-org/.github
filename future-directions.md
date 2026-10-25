@@ -19,7 +19,7 @@ MCP tools could let an agent discover and inspect project content, such as:
 
 - The project manifest and available Screens.
 - A Screen's asset hierarchy and named slots.
-- A specific asset instance, including its template, instance name, attributes, linked behavior spec, and location in the Screen.
+- A specific Asset, including its template, name, attributes, linked behavior spec, and location in the Screen.
 - Validation results or a rendered preview.
 
 MCP resources could provide read access to project artifacts and the OpenUX Standard. The standard could be exposed as a versioned resource so an agent can consult the same guidance used by the Studio, with its version and source made clear.

@@ -1,0 +1,57 @@
+---
+id: sign-in-story
+name: Sign-in Brand Story
+description: A standalone brand message with eyebrow, headline, and supporting copy.
+category: Forms/Sign-in
+attributes:
+  eyebrow:
+    type: string
+    default: A clearer view of your money
+    overridable: true
+  title:
+    type: string
+    default: Make room for what matters.
+    overridable: true
+  description:
+    type: string
+    default: Bring your accounts together and feel more confident about what comes next.
+    overridable: true
+---
+<style>
+  .openux-sign-in-story { color: #fff; font-family: Inter, "Segoe UI", Arial, sans-serif; }
+  .openux-sign-in-story__eyebrow {
+    margin: 0 0 13px;
+    color: #c5d3ff;
+    font-size: 10px;
+    font-weight: 750;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+  }
+  .openux-sign-in-story__title {
+    max-width: 390px;
+    margin: 0;
+    font-size: clamp(32px, 3.1vw, 44px);
+    font-weight: 720;
+    letter-spacing: -.045em;
+    line-height: 1.08;
+  }
+  .openux-sign-in-story__description {
+    max-width: 350px;
+    margin: 18px 0 0;
+    color: #d2dcfa;
+    font-size: 13px;
+    line-height: 1.75;
+  }
+  @media (max-width: 780px) {
+    .openux-sign-in-story__title { max-width: 440px; font-size: 32px; }
+    .openux-sign-in-story__description { margin-top: 10px; }
+  }
+  @media (max-width: 420px) {
+    .openux-sign-in-story__title { font-size: 28px; }
+  }
+</style>
+<section class="openux-sign-in-story">
+  <p class="openux-sign-in-story__eyebrow">${attributes.eyebrow}</p>
+  <h1 class="openux-sign-in-story__title">${attributes.title}</h1>
+  <p class="openux-sign-in-story__description">${attributes.description}</p>
+</section>
