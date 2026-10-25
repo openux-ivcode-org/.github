@@ -55,9 +55,6 @@ export class ScreenInstanceRenderer {
       image.src = services.safeProjectUrl(instance.src).href;
       image.alt = instance.alt;
       host.append(image);
-    } else if (type === "text") {
-      const text = services.element(instance.tag || "p", "screen-text", instance.content);
-      host.append(text);
     } else {
       throw new Error(`Element "${instance.id}" has unsupported type "${type}".`);
     }

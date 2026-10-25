@@ -293,13 +293,6 @@ export class InspectorRenderer {
         services.markEdited(state.screens[state.activeScreenIndex].file);
         services.refreshActiveView();
       });
-    } else if (instance.type === "text") {
-      services.appendEditableField(panel, "Text", instance.content || "", (value) => {
-        instance.content = value;
-        services.markEdited(state.screens[state.activeScreenIndex].file);
-        services.refreshActiveView();
-      }, { multiline: true });
-      this.appendDetail(panel, "HTML tag", instance.tag || "p");
     }
     if (state.activeInstancePath.length > 0) {
       const screen = state.screens[state.activeScreenIndex];

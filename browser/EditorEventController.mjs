@@ -77,11 +77,6 @@ export class EditorEventController {
       }
     });
     services.byId("save-project").addEventListener("click", () => services.saveProjectChanges());
-    services.byId("add-text-element").addEventListener("click", () =>
-      services.addTextElement().catch((error) =>
-        services.showEditorMessage("Could not add text Element", error.message || String(error))
-      )
-    );
     this.bindAssetContextMenu();
     this.bindBrowserHistory();
   }

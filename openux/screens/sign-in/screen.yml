@@ -29,7 +29,7 @@ elements:
           name: Account balance preview
           attributes:
             label: Total balance
-            amount: $24,680.50
+            amount: $24,000.00
             change: ↗ 8.4% this month
           type: template
           src: screens/sign-in/assets/sign-in-snapshot.stml

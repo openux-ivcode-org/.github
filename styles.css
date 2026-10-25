@@ -612,7 +612,20 @@
       font-size: 12px;
       font-weight: 700;
     }
-    .screen-yaml-source { min-height: 280px; resize: vertical; }
+    .screen-yaml-source {
+      width: 100%;
+      min-height: 280px;
+      flex: 1;
+      resize: vertical;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--ui-text-strong);
+      background: var(--ui-input-alt);
+      font: 12px/1.6 Consolas, "SFMono-Regular", monospace;
+      tab-size: 2;
+      white-space: pre;
+    }
     .screen-yaml-status {
       min-height: 18px;
       color: var(--ui-status);

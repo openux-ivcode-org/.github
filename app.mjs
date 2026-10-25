@@ -1022,10 +1022,6 @@ async function addAssetToScreen(assetPath) {
   return screenElementController.addToScreen(assetPath);
 }
 
-async function addTextElement() {
-  return screenElementController.addText();
-}
-
 function addAssetToSlot(parentPath, slotId, assetPath) {
   return screenElementController.addToSlot(parentPath, slotId, assetPath);
 }
@@ -1434,7 +1430,6 @@ const editorEventController = new EditorEventController({
     setScreenSelectorOpen,
     renderScreenSelector,
     saveProjectChanges,
-    addTextElement,
     closeAssetContextMenu,
     getTemplateByPath,
     renderAssetTemplate,

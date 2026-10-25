@@ -50,7 +50,6 @@ async function createProject() {
         { id: "dialog-open", name: "Dialog open", description: "Show the dialog." }
       ],
       elements: [
-        { id: "page-title", type: "text", tag: "h1", content: "Welcome" },
         { id: "brand-mark", type: "image", src: "assets/brand.png", alt: "Brand" },
         {
           id: "page-layout",
@@ -106,7 +105,7 @@ async function createProject() {
   return root;
 }
 
-test("discovers Assets and validates text, image, and template Elements", async () => {
+test("discovers Assets and validates image and template Elements", async () => {
   const root = await createProject();
   try {
     const result = await validateProject(root);
@@ -140,11 +139,25 @@ test("rejects manifest Asset registries and invalid Screen Element references", 
     await fs.writeFile(manifestPath, YAML.stringify(manifest));
     const screenPath = path.join(root, "screens", "home", "screen.yml");
     const screen = YAML.parse(await fs.readFile(screenPath, "utf8"));
-    screen.elements[1].src = "assets/missing.png";
-    screen.elements[2].type = "image";
+    screen.elements[0].src = "assets/missing.png";
+    screen.elements[1].type = "image";
     await fs.writeFile(screenPath, YAML.stringify(screen));
     result = await validateProject(root);
     assert.ok(result.errors.some((error) => error.includes('does not reference a discovered image asset')));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects inline text Screen Elements", async () => {
+  const root = await createProject();
+  try {
+    const screenPath = path.join(root, "screens", "home", "screen.yml");
+    const screen = YAML.parse(await fs.readFile(screenPath, "utf8"));
+    screen.elements.unshift({ id: "page-title", type: "text", content: "Welcome" });
+    await fs.writeFile(screenPath, YAML.stringify(screen));
+    const result = await validateProject(root);
+    assert.ok(result.errors.some((error) => error.includes('type must be "image" or "template"')));
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

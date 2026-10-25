@@ -256,25 +256,6 @@ export class ScreenElementController {
     return this.addToContainer(assetPath, [], null);
   }
 
-  async addText() {
-    const { state, services } = this;
-    const screen = state.screens[state.activeScreenIndex];
-    if (!screen) throw new Error("Select a Screen before adding an Element.");
-    const elements = this.getSiblingList(screen, [], null);
-    const instance = {
-      id: this.createInstanceId(screen, "Text", "text"),
-      type: "text",
-      name: "Text",
-      content: "Text",
-      tag: "p"
-    };
-    const index = elements.length;
-    elements.push(instance);
-    services.markEdited(screen.file);
-    await services.renderScreen(state.activeScreenIndex);
-    services.selectInstance([index], null);
-  }
-
   addToSlot(parentPath, slotId, assetPath) {
     return this.addToContainer(assetPath, parentPath, slotId);
   }

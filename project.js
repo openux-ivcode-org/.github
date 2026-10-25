@@ -326,13 +326,13 @@ async function validateProject(projectRoot) {
       } catch (error) {
         pushError(errors, location, error);
       }
-      if (!["text", "image", "template"].includes(instance.type)) {
-        errors.push(`${location}: type must be "text", "image", or "template".`);
+      if (!["image", "template"].includes(instance.type)) {
+        errors.push(`${location}: type must be "image" or "template".`);
         return;
       }
       const allowedProperties = new Set([
-        "id", "type", "name", "description", "note", "visibility", "src", "alt", "content",
-        "tag", "attributes", "slots"
+        "id", "type", "name", "description", "note", "visibility", "src", "alt",
+        "attributes", "slots"
       ]);
       for (const property of Object.keys(instance)) {
         if (!allowedProperties.has(property)) {
@@ -349,43 +349,30 @@ async function validateProject(projectRoot) {
         errors.push(`${location}: name must not be empty.`);
       }
       let asset = null;
-      if (instance.type === "text") {
-        if (typeof instance.content !== "string") {
-          errors.push(`${location}: text content must be a string.`);
+      if (typeof instance.src !== "string" || !instance.src) {
+        errors.push(`${location}: ${instance.type} elements must define an asset file path in src.`);
+        return;
+      }
+      asset = assets.get(instance.src);
+      if (!asset || (instance.type === "template" && asset.type !== "template") ||
+          (instance.type === "image" && asset.type !== "image")) {
+        errors.push(`${location}: src "${instance.src}" does not reference a discovered ${instance.type} asset.`);
+        return;
+      }
+      usedAssetFiles.add(instance.src);
+      if (asset.screen && asset.screen !== screen.id) {
+        errors.push(`${location}: asset "${instance.src}" belongs to Screen "${asset.screen}" and cannot be used on Screen "${screen.id}".`);
+      }
+      if (instance.type === "image") {
+        if (typeof instance.alt !== "string") {
+          errors.push(`${location}: image alt must be a string (use an empty string for decorative images).`);
         }
-        if (instance.tag !== undefined &&
-            !["p", "span", "h1", "h2", "h3", "h4", "h5", "h6", "label", "strong", "small"].includes(instance.tag)) {
-          errors.push(`${location}: text tag is not supported.`);
-        }
-        for (const property of ["src", "alt", "attributes", "slots"]) {
-          if (Object.hasOwn(instance, property)) errors.push(`${location}: text elements cannot define "${property}".`);
+        for (const property of ["attributes", "slots"]) {
+          if (Object.hasOwn(instance, property)) errors.push(`${location}: image elements cannot define "${property}".`);
         }
       } else {
-        if (typeof instance.src !== "string" || !instance.src) {
-          errors.push(`${location}: ${instance.type} elements must define an asset file path in src.`);
-          return;
-        }
-        asset = assets.get(instance.src);
-        if (!asset || (instance.type === "template" && asset.type !== "template") ||
-            (instance.type === "image" && asset.type !== "image")) {
-          errors.push(`${location}: src "${instance.src}" does not reference a discovered ${instance.type} asset.`);
-          return;
-        }
-        usedAssetFiles.add(instance.src);
-        if (asset.screen && asset.screen !== screen.id) {
-          errors.push(`${location}: asset "${instance.src}" belongs to Screen "${asset.screen}" and cannot be used on Screen "${screen.id}".`);
-        }
-        if (instance.type === "image") {
-          if (typeof instance.alt !== "string") {
-            errors.push(`${location}: image alt must be a string (use an empty string for decorative images).`);
-          }
-          for (const property of ["content", "tag", "attributes", "slots"]) {
-            if (Object.hasOwn(instance, property)) errors.push(`${location}: image elements cannot define "${property}".`);
-          }
-        } else {
-          for (const property of ["alt", "content", "tag"]) {
-            if (Object.hasOwn(instance, property)) errors.push(`${location}: template elements cannot define "${property}".`);
-          }
+        if (Object.hasOwn(instance, "alt")) {
+          errors.push(`${location}: template elements cannot define "alt".`);
         }
       }
       if (Object.hasOwn(instance, "spec")) {

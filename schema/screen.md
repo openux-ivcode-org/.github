@@ -31,14 +31,14 @@ When a Screen defines non-default preview states, each state ID must appear in a
 
 ## Elements
 
-Each item in `elements`, and each child in a template Element's `slots`, is an Element mapping. Every Element requires a unique `id` within its Screen and a `type` of `text`, `image`, or `template`.
+Each item in `elements`, and each child in a template Element's `slots`, is an Element mapping. Every Element requires a unique `id` within its Screen and a `type` of `image` or `template`.
 
 Common properties:
 
 | Property | Type | Required | Definition |
 |---|---|---:|---|
 | `id` | string | Yes | Unique Element ID on this Screen; behavior specs link to it through Markdown front matter. |
-| `type` | string | Yes | One of `text`, `image`, or `template`. |
+| `type` | string | Yes | One of `image` or `template`. |
 | `name` | string | No | Name for this use of the Element. |
 | `description` | string | No | Description of this use of the Element. |
 | `note` | string | No | Implementation guidance for this Element. |
@@ -48,13 +48,12 @@ Type-specific properties:
 
 | Type | Required properties | Optional properties | Definition |
 |---|---|---|---|
-| `text` | `content` | `tag` | `content` is literal text. `tag` is one of `p`, `span`, `h1`–`h6`, `label`, `strong`, or `small`; it defaults to `p`. |
 | `image` | `src`, `alt` | — | `src` is a project-relative path to a discovered image asset. `alt` is a string; use an empty string for a decorative image. |
 | `template` | `src` | `attributes`, `slots` | `src` is a project-relative path to a discovered `.stml` template asset. `attributes` contains overrides marked `overridable: true` by that template. `slots` contains child Element lists keyed by the template's declared slot IDs. |
 
-Text and image Elements cannot define template attributes or slots. Template attributes and slot IDs are validated against the referenced template. Any template or image under `screens/<screen-id>/assets/` is limited to that Screen; files under project-level `assets/` are shared.
+Image Elements cannot define template attributes or slots. Template attributes and slot IDs are validated against the referenced template. Any template or image under `screens/<screen-id>/assets/` is limited to that Screen; files under project-level `assets/` are shared.
 
-An empty `elements` list is a valid empty Screen. Add text directly or drag an image or template asset from the file tree. Elements may be arranged at the Screen root or nested in a template's named slots. There is no mandatory root layout.
+An empty `elements` list is a valid empty Screen. Drag an image or template asset from the file tree to add an Element. Put text content in a template asset rather than adding it directly to the Screen. Elements may be arranged at the Screen root or nested in a template's named slots. There is no mandatory root layout.
 
 Element IDs must use lowercase letters, numbers, and hyphens and be unique within the Screen. An Element behavior spec links through the `element-id` YAML front matter and is named `screens/<screen-id>/specs/element-<element-id>.md`; do not add a `spec` property to the Element mapping. Each spec describes intended behavior and is Markdown guidance, not executable. Create or update specs for Elements whose behavior is specified by the user or project context. Do not create specs for purely visual Elements or invent behavior. See [`spec.md`](spec.md) for file conventions.
 
@@ -65,11 +64,6 @@ name: Sign In
 description: Sign in to the application.
 note: Keep the page focused on account access.
 elements:
-  - id: page-title
-    type: text
-    name: Sign-in heading
-    tag: h1
-    content: Welcome back
   - id: brand-mark
     type: image
     src: assets/brand-mark.svg
